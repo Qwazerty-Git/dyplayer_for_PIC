@@ -225,19 +225,12 @@ So we come to:
 Let's round that up to `40` and you could even have some more nesting as long as
 the directory names are small enough.
 
-The library will therefore define `DY_PATH_LEN` as `40`, you can override that
+The library will therefore define `DY_MAX_PATH_LEN` as `40`, you can override that
 if you need more, or if you want to save a few bytes of precious memory. Note
 that `40` is the maximum length of the path **after conversion** to the funcky
 format required by the module. The amount of bytes you may use with this default
-is set at `36`.
+is set at `36`. This max value is check when function have char parameter and exit if the **converted path** have more than `DY_MAX_PATH_LEN`.
 
-Alternatively, if you have a more capable device and/or you can use virtual
-memory, you can define `DY_PATHS_IN_HEAP` to use heap memory instead of reserved
-stack memory.
-
-NOTE: On Arduino, you can wrap your strings in `F()` to tell the compiler you
-want the string stored in flash, as opposed to RAM (default), which will save
-you even more RAM.
 
 ## Arduino
 

@@ -1,0 +1,406 @@
+/**
+ * Abstraction of basic features of the DY-SV17F mp3 player board, written for
+ * Arduino, should work on other frameworks as well. Instead of DY-SV17F I will
+ * from here on refer to it as the "module".
+ *
+ * There are some virtual methods that MUST be overridden (serialRead and
+ * serialWrite) and one that you may override (begin)
+ */
+//#include <ctype.h>
+#include <string.h>
+#include <ctype.h>
+#include "DYPlayer_PIC.h"
+
+
+#ifdef __cplusplus
+namespace DY
+{
+#endif
+
+//  private prototype
+
+
+
+
+
+
+void DYPlayer_init(dy_player_t *player, dy_uart_write_fn_t uart_write_fn, dy_uart_read_fn_t uart_read_fn, uint8_t options)
+{
+    player->uart_write = uart_write_fn;
+    player->uart_read = uart_read_fn;
+    player->options = options;
+}
+
+/**
+  * Calculate the sum of all bytes in a buffer as a simple "CRC".
+  * @param data pointer to bytes to calculate the CRC for.
+  * @param size of buffer.
+  * @return Checksum of the buffer.
+  */
+static uint8_t  checksum(const uint8_t *data, uint8_t size)
+{
+  uint8_t sum = 0;
+  for (uint8_t i = 0; i < size; i++)
+  {
+    sum = sum + data[i];
+  }
+  return sum;
+}
+
+/**
+  * Validate data buffer with CRC byte (last byte should be the CRC byte).
+  * @param data pointer to bytes to calculate the CRC for.
+  * @param size of data.
+  * @return boolean indicating CRC is correct (true) or incorrect (false).
+  */
+static bool  validateCrc(uint8_t *data, uint8_t size)
+{
+  uint8_t crc = data[size - 1];
+  return checksum(data, size - 1) == crc;
+}
+
+/**
+  * Send a command to the module, adds a CRC to the passed buffer.
+  * @param dy_player pointer to the player instance.
+  * @param command The command to send to the module.
+  * @param data pointer to bytes to send to the module (can be NULL if no data).
+  * @param size of data (0 if no data).
+  */
+static bool sendCommand(dy_player_t *player,uint8_t command, uint8_t *data, uint8_t size)
+{
+  if (player == NULL || player->uart_write == NULL) return false;
+
+  uint8_t buffer[3];
+  buffer[0] = 0xAA;
+  buffer[1] = command;
+  buffer[2] = size;
+  player->uart_write(buffer, sizeof(buffer));
+
+  uint8_t crc[1]={0};
+  crc[0] = checksum(buffer, sizeof(buffer));
+  if (data != NULL && size > 0) {
+    player->uart_write(data, size);
+    crc[0] += checksum(data, size);
+  }
+
+  player->uart_write(crc, 1);
+
+  return true;
+}
+  
+/**
+  * Send command with converted paths to  weird format required by the
+  * modules.
+  *
+  * - Any dot in a path should become a star (`*`)
+  * - Path ending slashes should be have a star prefix, except root.
+  *
+  * E.g.: /SONGS1/FILE1.MP3 should become: /SONGS1﹡/FILE1*MP3
+  * NOTE: This comment uses a unicode * look-a-alike (﹡) because ﹡/ end the
+  * comment.
+  * @param player pointer to the player instance.
+  * @param command The command to send.
+  * @param device A [DY::Device member](#typedef-enum-class-dydevice_t),
+  *               e.g  `DY::Device::Flash` or `DY::Device::Sd`.
+  * @param path of the file (asbsolute).
+  */
+static bool byPathCommand(dy_player_t *player, uint8_t command, device_t device, const char *path)
+{
+  if (player == NULL || player->uart_write == NULL || path == NULL) return false;
+
+  size_t size_size = strlen(path);
+  if (size_size == 0 || size_size > UINT8_MAX) {
+    return false;
+  }
+
+  uint8_t size = (uint8_t)size_size;
+
+  uint8_t transformed_len = size;
+  for (uint8_t i = 1; i < size; i++) {
+    if (path[i] == '/') {
+      transformed_len++;
+    }
+  }
+
+  if (transformed_len > DY_MAX_PATH_LEN) {
+      return false;
+  } 
+
+  uint8_t header[5];
+  header[0] = 0xAA;
+  header[1] = command;
+  header[2] = transformed_len + 1; // + device byte
+  header[3] = (uint8_t)device;
+  header[4] = toupper((unsigned char)path[0]);
+
+  uint8_t crc = checksum(header, sizeof(header));
+
+  player->uart_write(header, sizeof(header));
+
+  for (uint8_t i = 1; i < size; i++) {
+    char c = path[i];
+
+    if (c == '.') {
+      uint8_t byte = '*';
+      crc += byte;
+      player->uart_write(&byte, 1);
+    } else if (c == '/') {
+      uint8_t bytes[2] = { '*', '/' };
+      crc += bytes[0] + bytes[1];
+      player->uart_write(bytes, sizeof(bytes));
+    } else {
+      uint8_t byte = (uint8_t)toupper((unsigned char)c);
+      crc += byte;
+      player->uart_write(&byte, 1);
+    }
+  }
+
+  player->uart_write(&crc, 1);
+  return true;
+}
+
+/** Public API */
+
+  play_state_t DYPlayer_checkPlayState(dy_player_t *player)
+  {
+    if (player == NULL || player->uart_read == NULL)
+        return PLAY_STATE_FAIL;
+
+
+    sendCommand(player, 0x01, NULL, 0);
+    uint8_t buffer[5];
+    if (player->uart_read(buffer, 5))
+    {
+      return (play_state_t)buffer[3];
+    }
+    return PLAY_STATE_FAIL;
+  }
+
+  void DYPlayer_play(dy_player_t *player)
+  {
+    sendCommand(player, 0x02, NULL, 0);
+  }
+
+  void DYPlayer_pause(dy_player_t *player)
+  {
+    sendCommand(player, 0x03, NULL, 0);
+  }
+
+  void DYPlayer_stop(dy_player_t *player)
+  {
+    sendCommand(player, 0x04, NULL, 0);
+  }
+
+  void DYPlayer_previous(dy_player_t *player)
+  {
+    sendCommand(player, 0x05, NULL, 0);
+  }
+
+  void DYPlayer_next(dy_player_t *player)
+  {
+    sendCommand(player, 0x06, NULL, 0);
+  }
+
+  void DYPlayer_playSpecified(dy_player_t *player, uint16_t number)
+  {
+    uint8_t data[2] = {
+        (uint8_t)(number >> 8),
+        (uint8_t)(number & 0xff)
+    };
+
+    sendCommand(player, 0x07, data, 2);
+  }
+  
+  void DYPlayer_playSpecifiedDevicePath(dy_player_t *player, device_t device,const char *path)
+  {
+    byPathCommand(player, 0x08, device, path);
+  }
+
+  device_t DYPlayer_getPlayingDevice(dy_player_t *player)
+  {
+    if (!sendCommand(player, 0x0a, NULL, 0))
+        return DEVICE_FAIL;
+
+    uint8_t buffer[5];
+    if (player->uart_read(buffer, 5))
+    {
+      return (device_t)buffer[3];
+    }
+    return DEVICE_FAIL;
+  }
+
+  void DYPlayer_setPlayingDevice(dy_player_t *player, device_t device)
+  {
+    uint8_t data[1] = {(uint8_t)device};
+    sendCommand(player, 0x0b, data, 1);  }
+
+  uint16_t DYPlayer_getSoundCount(dy_player_t *player)
+  {
+    if (!sendCommand(player, 0x0c, NULL, 0))
+        return 0;
+    
+    uint8_t buffer[6];
+    if (player->uart_read(buffer, 6))
+    {
+      return (buffer[3] << 8) | buffer[4];
+    }
+    return 0;
+  }
+
+  uint16_t DYPlayer_getPlayingSound(dy_player_t *player)
+  {
+    if (!sendCommand(player, 0x0d, NULL, 0))
+        return 0;
+
+    uint8_t buffer[6];
+    if (player->uart_read(buffer, 6))
+    {
+      return (buffer[3] << 8) | buffer[4];
+    }
+    return 0;
+  }
+
+  void DYPlayer_previousDir(dy_player_t *player, playDirSound_t song)
+  {
+    if (song == PREVIOUS_DIR_LAST_SOUND)
+    {
+      sendCommand(player, 0x0e, NULL, 0);
+    }
+    else
+    {
+      sendCommand(player, 0x0f, NULL, 0);
+    }
+  }
+
+  uint16_t DYPlayer_getFirstInDir(dy_player_t *player)
+  {
+    if (!sendCommand(player, 0x11, NULL, 0))
+        return 0;
+      
+    uint8_t buffer[6];
+    if (player->uart_read(buffer, 6))
+    {
+      return (buffer[3] << 8) | buffer[4];
+    }
+    return 0;
+  }
+
+  uint16_t DYPlayer_getSoundCountDir(dy_player_t *player)
+  {
+    if (!sendCommand(player, 0x12, NULL, 0))
+        return 0;
+
+    uint8_t buffer[6];
+    if (player->uart_read(buffer, 6))
+    {
+      return (buffer[3] << 8) | buffer[4];
+    }
+    return 0;
+  }
+
+  void DYPlayer_setVolume(dy_player_t *player, uint8_t volume)
+  {
+    uint8_t data[1] = {volume};
+    sendCommand(player, 0x13, data, 1);
+  }
+
+  void DYPlayer_volumeIncrease(dy_player_t *player)
+  {
+    sendCommand(player, 0x14, NULL, 0);
+  }
+
+  void DYPlayer_volumeDecrease(dy_player_t *player)
+  {
+    sendCommand(player, 0x15, NULL, 0);
+  }
+
+  void DYPlayer_interludeSpecified(dy_player_t *player, device_t device, uint16_t number)
+  {
+    uint8_t data[3] = {0};
+    data[0] = (uint8_t)device;
+    data[1] = number >> 8;
+    data[2] = number & 0xff;
+    sendCommand(player, 0x16, data, 3);
+  }
+
+  void DYPlayer_interludeSpecifiedDevicePath(dy_player_t *player, device_t device, const char *path)
+  {
+    byPathCommand(player, 0x17, device, path);
+  }
+
+  void DYPlayer_stopInterlude(dy_player_t *player)
+  {
+    sendCommand(player, 0x10, NULL, 0);
+  }
+
+  void DYPlayer_setCycleMode(dy_player_t *player, play_mode_t mode)
+  {
+    uint8_t data[1] = {mode};
+    sendCommand(player, 0x18, data, 1);
+  }
+
+  void DYPlayer_setCycleTimes(dy_player_t *player, uint16_t cycles)
+  {
+    uint8_t data[2] = {0};
+    data[0] = cycles >> 8;
+    data[1] = cycles & 0xff;
+    sendCommand(player, 0x19, data, 2);
+  }
+
+  void DYPlayer_setEq(dy_player_t *player, eq_t eq)
+  {
+    uint8_t data[1] = { (uint8_t)eq };
+    sendCommand(player, 0x1a, data, 1);
+  }
+
+  void DYPlayer_select(dy_player_t *player, uint16_t number)
+  {
+    uint8_t data[2] = {0};
+    data[0] = number >> 8;
+    data[1] = number & 0xff;
+    sendCommand(player, 0x1f, data, 2);
+  }
+
+  void DYPlayer_combinationPlay(dy_player_t *player, const char *sounds[], uint8_t size)
+  {
+  if (sounds == NULL || size == 0) {
+      return;
+  }
+
+  for (uint8_t i = 0; i < size; i++) {
+      if (sounds[i] == NULL ||
+          sounds[i][0] == '\0' ||
+          sounds[i][1] == '\0') {
+          return;
+      }
+  }
+
+    // This part of the command can be easily determined already.
+    uint8_t header[3] = {0xaa, 0x1b, size*2};
+
+    // Depends on the length, checksum is a sum so we can add the other values
+    // later.
+    uint8_t crc = checksum(header, 3);
+
+    // Send the command and length already.
+    player->uart_write(header , 3);
+
+    // Send each pair of chars containing the file name and add the values of
+    // each char to the crc.
+    for (uint8_t i = 0; i < size; i++)
+    {
+      crc += checksum((const uint8_t *)sounds[i], 2);
+      player->uart_write((const uint8_t *)sounds[i], 2);
+    }
+    // Lastly, write the crc value.
+    player->uart_write(&crc, 1);
+  }
+
+  void DYPlayer_endCombinationPlay(dy_player_t *player)
+  {
+    sendCommand(player, 0x1c, NULL, 0);
+  }
+
+#ifdef __cplusplus
+}
+#endif
