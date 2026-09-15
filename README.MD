@@ -21,13 +21,13 @@ The following modules were listed as compatible with the original protocol
 library. They are a compatibility reference, not a guarantee that every model
 or every feature has been tested with this PIC port.
 
-| Model    | Storage / capacity | SD support | Amplifier       | Supply |
-| :------- | :----------------- | :--------- | :-------------- | :----- |
-| DY-SV17F | 32 Mbit            | No         | 3-5 W (4/8 ohm) | 5 VDC  |
-| DY-SV8F  | 64 Mbit            | No         | 3-5 W (4/8 ohm) | 5 VDC  |
-| DY-HV20T | External storage   | Yes, up to 32 GB | 3-5 W (4/8 ohm) | 5 VDC |
-| DY-HV8F  | 8 Mbit             | No         | 10 W (8 ohm), 20 W (4 ohm) | 6-35 VDC |
-| DY-SV5W  | External storage   | Yes, up to 32 GB | 3-5 W (4/8 ohm) | 5 VDC |
+| Model    | Storage / capacity | SD support   | Amplifier                  | Supply   |
+|--------- |------------------- |------------- |--------------------------- |--------- |
+| DY-SV17F | 32 Mbit            | No           | 3-5 W (4/8 ohm)            | 5 VDC    |
+| DY-SV8F  | 64 Mbit            | No           | 3-5 W (4/8 ohm)            | 5 VDC    |
+| DY-HV20T | External storage   | Yes <= 32 GB | 3-5 W (4/8 ohm)            | 5 VDC    |
+| DY-HV8F  | 8 Mbit             | No           | 10 W (8 ohm), 20 W (4 ohm) | 6-35 VDC |
+| DY-SV5W  | External storage   | Yes <= 32 GB | 3-5 W (4/8 ohm)            | 5 VDC    |
 
 The original library was tested mainly with a DY-SV17F and DY-SV5W. Verify
 power, protocol compatibility and command behavior on the actual board.
@@ -47,14 +47,14 @@ off. If the board has no DIP switches, connect a `10KOhm` resistor from each
 The board normally exposes the 3.3 V point needed for `CON3`. Further
 connections are required:
 
-| Module pin | Connect to | Via                         |
-| :--------- | :--------- | :-------------------------- |
+| Module pin | Connect to | Via                          |
+| :--------- | :--------- | :--------------------------- |
 | `V?`       | `V+`       | Voltage depends on the board |
-| `GND`      | `GND`      |                             |
+| `GND`      | `GND`      |                              |
 | `IO0/TX`   | PIC RX     | `1KOhm` if using a 5 V board |
 | `IO1/RX`   | PIC TX     | `1KOhm` if using a 5 V board |
-| `SPK+`     | Speaker +  |                             |
-| `SPK-`     | Speaker -  |                             |
+| `SPK+`     | Speaker +  |                              |
+| `SPK-`     | Speaker -  |                              |
 
 Check the logic levels in the module datasheet. A 5 V UART signal may damage
 a 3.3 V input; use the recommended series resistors or level conversion.
@@ -109,9 +109,9 @@ when the callback fails, or when the response checksum is invalid.
 
 Available options can be combined with bitwise OR:
 
-| Option              | Value  | Meaning |
-| :------------------ | :----- | :------ |
-| `OPTION_AUX_IN`     | `0x01` | The module has an AUX input. |
+| Option              | Value  | Meaning                              |
+| :------------------ | :----- | :------------------------------------|
+| `OPTION_AUX_IN`     | `0x01` | The module has an AUX input.         |
 | `OPTION_ONLY_FLASH` | `0x02` | Reject commands targeting USB or SD. |
 
 For example:
@@ -148,22 +148,22 @@ same way before their values are returned to the application.
 
 Storage device constants are plain C values of type `device_t`:
 
-| Constant            | Value  | Meaning |
-| :------------------ | :----- | :------ |
-| `DEVICE_USB`        | `0x00` | USB storage. |
-| `DEVICE_SD`         | `0x01` | SD card. |
-| `DEVICE_FLASH`      | `0x02` | On-board Flash storage. |
-| `DEVICE_FAIL`       | `0xFE` | UART or response failure. |
+| Constant            | Value  | Meaning                     |
+| :------------------ | :----- | :-------------------------- |
+| `DEVICE_USB`        | `0x00` | USB storage.                |
+| `DEVICE_SD`         | `0x01` | SD card.                    |
+| `DEVICE_FLASH`      | `0x02` | On-board Flash storage.     |
+| `DEVICE_FAIL`       | `0xFE` | UART or response failure.   |
 | `DEVICE_NO_DEVICE`  | `0xFF` | No storage device detected. |
 
 Play state constants are values of type `play_state_t`:
 
-| Constant             | Value | Meaning |
-| :------------------- | :---- | :------ |
+| Constant             | Value | Meaning                   |
+| :------------------- | :---- | :------------------------ |
 | `PLAY_STATE_FAIL`    | `-1`  | UART or checksum failure. |
-| `PLAY_STATE_STOPPED` | `0`   | Playback stopped. |
-| `PLAY_STATE_PLAYING` | `1`   | Playback active. |
-| `PLAY_STATE_PAUSED`  | `2`   | Playback paused. |
+| `PLAY_STATE_STOPPED` | `0`   | Playback stopped.         |
+| `PLAY_STATE_PLAYING` | `1`   | Playback active.          |
+| `PLAY_STATE_PAUSED`  | `2`   | Playback paused.          |
 
 Numeric response functions return `0` on failure. Consequently, callers that
 need to distinguish a valid zero from an error should also check the UART or
@@ -173,35 +173,36 @@ perform an independent device-status check.
 
 The command codes used by the PIC implementation are:
 
-| Command                         | Code |
-| :------------------------------ | :--- |
+| Command                         | Code   |
+| :------------------------------ | :----- |
 | Check play state                | `0x01` |
 | Play                            | `0x02` |
 | Pause                           | `0x03` |
 | Stop                            | `0x04` |
-| Previous music                 | `0x05` |
-| Next music                     | `0x06` |
+| Previous music                  | `0x05` |
+| Next music                      | `0x06` |
 | Play specified music            | `0x07` |
 | Play specified device and path  | `0x08` |
 | Get playing device              | `0x0A` |
 | Set playing device              | `0x0B` |
-| Get sound count                | `0x0C` |
-| Get playing sound              | `0x0D` |
-| Previous directory              | `0x0E` or `0x0F` |
-| Stop interlude                 | `0x10` |
+| Get sound count                 | `0x0C` |
+| Get playing sound               | `0x0D` |
+| Previous directory   (??)       | `0x0E` |
+| Next directory       (??)       | `0x0F` |
+| Stop interlude                  | `0x10` |
 | Get first sound in directory    | `0x11` |
-| Get directory sound count      | `0x12` |
-| Set volume                     | `0x13` |
-| Increase volume                | `0x14` |
-| Decrease volume                | `0x15` |
-| Play specified interlude       | `0x16` |
-| Play interlude by path         | `0x17` |
-| Set cycle mode                 | `0x18` |
-| Set cycle times                | `0x19` |
-| Set equalizer                 | `0x1A` |
-| Combination play               | `0x1B` |
-| End combination play           | `0x1C` |
-| Select specified sound         | `0x1F` |
+| Get directory sound count       | `0x12` |
+| Set volume                      | `0x13` |
+| Increase volume                 | `0x14` |
+| Decrease volume                 | `0x15` |
+| Play specified interlude        | `0x16` |
+| Play interlude by path          | `0x17` |
+| Set cycle mode                  | `0x18` |
+| Set cycle times                 | `0x19` |
+| Set equalizer                   | `0x1A` |
+| Combination play                | `0x1B` |
+| End combination play            | `0x1C` |
+| Select specified sound          | `0x1F` |
 
 ## Playback and file naming
 
@@ -313,8 +314,8 @@ The cycle-time command applies to the repeat modes.
 
 Equalizer values:
 
-| Constant       | Value |
-| :------------- | :---- |
+| Constant       | Value  |
+| :------------- | :----- |
 | `EQ_NORMAL`    | `0x00` |
 | `EQ_POP`       | `0x01` |
 | `EQ_ROCK`      | `0x02` |
@@ -323,23 +324,23 @@ Equalizer values:
 
 Playback modes:
 
-| Constant               | Value | Meaning |
-| :--------------------- | :---- | :------ |
-| `PLAY_MODE_REPEAT`     | `0x00` | Repeat all music. |
-| `PLAY_MODE_REPEAT_ONE` | `0x01` | Repeat the current sound. |
-| `PLAY_MODE_ONE_OFF`    | `0x02` | Play once and stop. |
-| `PLAY_MODE_RANDOM`     | `0x03` | Play random sounds. |
-| `PLAY_MODE_REPEAT_DIR` | `0x04` | Repeat the current directory. |
-| `PLAY_MODE_RANDOM_DIR` | `0x05` | Play random sounds in the current directory. |
+| Constant                 | Value  | Meaning                                            |
+| :----------------------- | :----- | :------------------------------------------------- |
+| `PLAY_MODE_REPEAT`       | `0x00` | Repeat all music.                                  |
+| `PLAY_MODE_REPEAT_ONE`   | `0x01` | Repeat the current sound.                          |
+| `PLAY_MODE_ONE_OFF`      | `0x02` | Play once and stop.                                |
+| `PLAY_MODE_RANDOM`       | `0x03` | Play random sounds.                                |
+| `PLAY_MODE_REPEAT_DIR`   | `0x04` | Repeat the current directory.                      |
+| `PLAY_MODE_RANDOM_DIR`   | `0x05` | Play random sounds in the current directory.       |
 | `PLAY_MODE_SEQUENCE_DIR` | `0x06` | Play the current directory in sequence, then stop. |
-| `PLAY_MODE_SEQUENCE`   | `0x07` | Play the device in sequence, then stop. |
+| `PLAY_MODE_SEQUENCE`     | `0x07` | Play the device in sequence, then stop.            |
 
 Previous-directory behavior:
 
-| Constant                    | Value | Meaning |
-| :-------------------------- | :---- | :------ |
+| Constant                    | Value  | Meaning                   |
+| :-------------------------- | :----- | :------------------------ |
 | `PREVIOUS_DIR_FIRST_SOUND`  | `0x00` | Start at the first sound. |
-| `PREVIOUS_DIR_LAST_SOUND`   | `0x01` | Start at the last sound. |
+| `PREVIOUS_DIR_LAST_SOUND`   | `0x01` | Start at the last sound.  |
 
 ## Public API
 
