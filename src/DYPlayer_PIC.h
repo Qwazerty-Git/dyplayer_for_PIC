@@ -122,23 +122,35 @@ enum
       PREVIOUS_DIR_LAST_SOUND
   };  
 
+/**
+  * Function pointer type for UART write.
+  * @param buffer Pointer to the data buffer to be written.
+  * @param size Number of bytes to write from the buffer.
+*/
   typedef void (*dy_uart_write_fn_t)(const uint8_t *buffer, uint8_t size);
-  typedef bool (*dy_uart_read_fn_t)(uint8_t *buffer, uint8_t size);
 
-  typedef struct
-  {
-    dy_uart_read_fn_t uart_read;
-    dy_uart_write_fn_t uart_write;
-    uint8_t options;
-  } dy_player_t;
+/**
+  * Function pointer type for UART read.
+  * @param buffer Pointer to the data buffer to store the read data.
+  * @param size Number of bytes to read into the buffer.
+  * @param timeout_ms Timeout in milliseconds for the read operation.
+  * @return Boolean indicating if the read was successful (true) or not (false).
+  */
+typedef bool (*dy_uart_read_fn_t)(uint8_t *buffer, uint8_t size, uint16_t timeout_ms);
+
+typedef struct
+{
+  dy_uart_read_fn_t uart_read;
+  dy_uart_write_fn_t uart_write;
+  uint8_t options;
+} dy_player_t;
 
 /**
   * Initialize the DYPlayer module.
   * @param player pointer to the `dy_player_t` structure.
   * @param uart_write_fn function pointer for UART write.
   * @param uart_read_fn function pointer for UART read. Can be NULL if not used.
-  * @param opt_aux_in_used indicates if the AUX input is used.
-  * @param opt_only_flash indicates if only the flash storage is available.
+  * @param options Options for the DYPlayer initialization.
   * @return boolean indicating if the initialization was successful (true) or not (false).
   */
 bool DYPlayer_init(dy_player_t *player, dy_uart_write_fn_t uart_write_fn, dy_uart_read_fn_t uart_read_fn, uint8_t options);

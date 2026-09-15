@@ -82,7 +82,7 @@ static void uart_write(const uint8_t *buffer, uint8_t size)
     /* Send exactly size bytes through the PIC UART. */
 }
 
-static bool uart_read(uint8_t *buffer, uint8_t size)
+static bool uart_read(uint8_t *buffer, uint8_t size, uint16_t timeout_ms)
 {
     /* Read exactly size bytes before returning true on success. */
     return false;
@@ -99,7 +99,7 @@ The callback structure is:
 
 ```c
 typedef void (*dy_uart_write_fn_t)(const uint8_t *buffer, uint8_t size);
-typedef bool (*dy_uart_read_fn_t)(uint8_t *buffer, uint8_t size);
+typedef bool (*dy_uart_read_fn_t)(uint8_t *buffer, uint8_t size, uint16_t timeout_ms);
 ```
 
 `DYPlayer_init()` stores the callbacks and option flags in `dy_player_t`. It

@@ -11,6 +11,7 @@
 #include <ctype.h>
 #include "DYPlayer_PIC.h"
 
+#define DY_UART_BYTE_TIMEOUT_MS  50 
 
 #ifdef __cplusplus
 namespace DY
@@ -159,7 +160,7 @@ namespace DY
     
     if (player == NULL || player->uart_read == NULL) return false;
 
-    if (player->uart_read(buffer, size)){
+    if (player->uart_read(buffer, size,DY_UART_BYTE_TIMEOUT_MS )){
       if (validateCrc(buffer, size)) return true;
     }
     return false;
