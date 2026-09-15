@@ -1,651 +1,213 @@
-# Abstracted UART Control of DY-XXXX mp3 modules
+# DY-XXXX UART player for PIC
 
-This library abstracts all features described in the manual into a C++ class.
+This library provides a C API for controlling DY-XXXX audio modules through
+their UART protocol. It is currently intended for PIC microcontrollers using
+Microchip XC8.
 
-This library **does not support** the `ONE_Line` protocol,
-[more info](#one_line-support).
+The implementation is hardware-independent at the UART boundary: the
+application supplies callbacks for transmitting and, when needed, receiving
+bytes. No dynamic allocation is used by the PIC port.
 
-Although all features are implemented and should theoretically work, only
-those in the examples directory are tested. Please create an issue if you have
-problems.
+The library supports the UART protocol only. It does not support the
+`ONE_Line` protocol.
 
-This library was written in a hardware independent way. Which means it should
-work on any device with a serial port, e.g. any Arduino, Espressif, ARM based
-boards, probably even any computer.
+## Supported modules
 
-There are Hardware Abstraction Layers (HAL) included for [Arduino](#arduino)
-and [ESP-IDF](#esp-idf), for other boards you will have to
-[provide one yourself](#hal) (PR is welcome!).
+The protocol is used by several DY-XXXX and JQ8400-family modules. The exact
+features and electrical limits depend on the board, so check the datasheet for
+the module being used.
 
-## Note on upgrading from version 3.x.x to version 4.x.x
+The following modules were listed as compatible with the original protocol
+library. They are a compatibility reference, not a guarantee that every model
+or every feature has been tested with this PIC port.
 
-**TL;DR:** Change all occurances of enum constants of `DY::Device`,
-`DY::PlayState`, `DY::Eq`, `DY::PlayMode` and `DY::PreviousDir` from upper case
-to CamelCase, e.g.: `DY::Device::FLASH` to `DY::Device::Flash`.
+| Model    | Storage / capacity | SD support | Amplifier       | Supply |
+| :------- | :----------------- | :--------- | :-------------- | :----- |
+| DY-SV17F | 32 Mbit            | No         | 3-5 W (4/8 ohm) | 5 VDC  |
+| DY-SV8F  | 64 Mbit            | No         | 3-5 W (4/8 ohm) | 5 VDC  |
+| DY-HV20T | External storage   | Yes, up to 32 GB | 3-5 W (4/8 ohm) | 5 VDC |
+| DY-HV8F  | 8 Mbit             | No         | 10 W (8 ohm), 20 W (4 ohm) | 6-35 VDC |
+| DY-SV5W  | External storage   | Yes, up to 32 GB | 3-5 W (4/8 ohm) | 5 VDC |
 
-One of the problems with C++ I learned about, the hard way is how the namespace
-can still be polluted despite namespacing everything. As macro's are handled by
-the preprocessor, any mention of a macro in the source, even if obviously
-intended as code (well to a human) will be interpreted as a call to a macro.
+The original library was tested mainly with a DY-SV17F and DY-SV5W. Verify
+power, protocol compatibility and command behavior on the actual board.
 
-Embedded devices' headers rely on macro's heavily and they aren't generally
-prefixed. So users reported collisions between constants such as `USB` (it's
-actually part of an enum class: `DY::Device::USB` which makes this even more
-frustrating) and a macro defined for a board that has a USB port, also named
-`USB`.
+## Wiring
 
-The only way around it is to drop the social convention (that was arguably
-already advised against) of naming constants in capitals, the compiler
-doesn't care about this convention, it's just usually done for readability.
+If the board has DIP switches, set `CON3` to on and leave `CON1` and `CON2`
+off. If the board has no DIP switches, connect a `10KOhm` resistor from each
+`CON#` pin as follows:
 
-## Modules should work (not exhaustive)
+| Module pin | Connect to | Via      |
+| :--------- | :--------- | :------- |
+| `CON1`     | `GND`      | `10KOhm` |
+| `CON2`     | `GND`      | `10KOhm` |
+| `CON3`     | `3.3V`     | `10KOhm` |
 
-| Model name | Capacity | SD Card support | Amplifier       | Voltage | Tested  |
-| :--------- | :------- | :-------------: | :-------------- | :-----: | :-----: |
-| DY-SV17F   | 32Mbit   |       No        | 3-5W(4Ω/8Ω)     |  5VDC   | **Yes** |
-| DY-SV8F    | 64Mbit   |       No        | 3-5W(4Ω/8Ω)     |  5VDC   |   No    |
-| DY-HV20T   | NA       | Yes, Max. 32GB  | 3-5W(4Ω/8Ω)     |  5VDC   |   No    |
-| DY-HV8F    | 8Mbit    |       No        | 10W(8Ω)/20W(4Ω) | 6-35VDC |   No    |
-| DY-HV20T   | NA       | Yes, Max. 32GB  | 10W(8Ω)/20W(4Ω) | 6-35VDC |   No    |
-| DY-SV5W    | NA       | Yes, Max. 32GB  | 3-5W(4Ω/8Ω)     |  5VDC   | **Yes** |
+The board normally exposes the 3.3 V point needed for `CON3`. Further
+connections are required:
 
-NOTE: I cannot guarantee that your board will work with the library. Nor that
-a specific feature will work. I only have the `DY-SV17F` in my possession to
-test at the time of writing. If something does not work, make an issue and/or
-send me a pull request.
+| Module pin | Connect to | Via                         |
+| :--------- | :--------- | :-------------------------- |
+| `V?`       | `V+`       | Voltage depends on the board |
+| `GND`      | `GND`      |                             |
+| `IO0/TX`   | PIC RX     | `1KOhm` if using a 5 V board |
+| `IO1/RX`   | PIC TX     | `1KOhm` if using a 5 V board |
+| `SPK+`     | Speaker +  |                             |
+| `SPK-`     | Speaker -  |                             |
 
-## Wiring the module
+Check the logic levels in the module datasheet. A 5 V UART signal may damage
+a 3.3 V input; use the recommended series resistors or level conversion.
 
-If you have a board with DIP switches, set `CON3` to on, `CON1` and `CON2`
-should remain off. If your board doesn't have DIP switches (e.g. `DY-SV17F`
-board), you have to connect 3 resistors of `10KOhm`, one from each `CON#` pin,
-to:
+## Implementation layout
 
-| CON pin | Connect to | Via      |
-| :------ | :--------- | :------- |
-| `CON1`  | `GND`      | `10KOhm` |
-| `CON2`  | `GND`      | `10KOhm` |
-| `CON3`  | `3.3V`     | `10KOhm` |
+- `src/DYPlayer_PIC.h`: public C types, constants and function declarations.
+- `src/DYPlayer_PIC.c`: PIC implementation.
+- `CMakeLists.txt`: builds the static `dyplayer` library from the PIC source.
 
-The 3.3V pin is exposed by the board so you don't need to provide it yourself.
+The `examples/` directory still contains legacy platform examples. They are
+not part of the current PIC API documentation and have intentionally not been
+updated here.
 
-Further make these connections:
+## Initialisation and UART callbacks
 
-| Pin      | Connect to                       | Via                         |
-| :------- | :------------------------------- | :-------------------------- |
-| `V?`     | `V+` (voltage depends on module) |                             |
-| `GND`    | `GND`                            |                             |
-| `IO0/TX` | `MCU RX`                         | `1KOhm` if using a 5V board |
-| `IO1/RX` | `MCU TX`                         | `1KOhm` if using a 5V board |
-| `SPK+`   | Speaker positive lead            |                             |
-| `SPK-`   | Speaker negative lead            |                             |
+The write callback is required. The read callback may be `NULL` when the
+application only uses commands that do not require a response.
 
-`MCU` should be your board or microprocessor, e.g. an Arduino board.
+```c
+#include "DYPlayer_PIC.h"
 
-Note the logic levels should be 3.3V or at least limited by a `1KOhm`
-resistor according to the module manual, or you could damage the module. Some modules appear to
-have resistors
-[soldered onto the board](https://github.com/SnijderC/dyplayer/issues/18#issuecomment-655402238).
-Make sure to check the datasheet of your board.
-
-## HAL
-
-**Arduino tl;dr;**
-If you are using Arduino, skip this chapter and go to [Arduino](#arduino).
-
-**ESP32 tl;dr;**
-If you are using ESP-IDF, skip this chapter and go to [ESP-IDF](#esp-idf).
-
-Because the library is hardware independent you might need to add a Hardware
-Abstraction Layer (HAL) which sets up the serial port and that implements a
-minimum of 2 functions `serialWrite()` and `serialRead()`, there is a HAL for
-Arduino included, here's a **simplified** version of it:
-
-```C++
-// player.hpp
-#include <Arduino.h>
-#include "DYPlayer.h"
-namespace DY {
-  class Player: public DYPlayer {
-    public:
-      HardwareSerial *port;
-      Player();
-      Player(HardwareSerial* port);
-      void begin();
-      void serialWrite(uint8_t *buffer, uint8_t len);
-      bool serialRead(uint8_t *buffer, uint8_t len);
-  };
+static void uart_write(const uint8_t *buffer, uint8_t size)
+{
+    /* Send exactly size bytes through the PIC UART. */
 }
 
-
-//player.cpp
-#include "player.hpp"
-#include "DYPlayerArduino.h"
-
-namespace DY {
-  Player::Player() {
-    this->port = &Serial;
-  }
-  Player::Player(HardwareSerial* port) {
-    this->port = port;
-  }
-  void Player::begin() {
-    port->begin(9600);
-  }
-  void Player::serialWrite(uint8_t *buffer, uint8_t len) {
-    port->write(buffer, len);
-  }
-  bool Player::serialRead(uint8_t *buffer, uint8_t len) {
-    // Serial.setTimeout(1000); // Default timeout 1000ms.
-    if(port->readBytes(buffer, len) > 0) {
-      return true;
-    }
+static bool uart_read(uint8_t *buffer, uint8_t size)
+{
+    /* Read exactly size bytes before returning true on success. */
     return false;
-  }
 }
 
+dy_player_t player;
+
+if (!DYPlayer_init(&player, uart_write, uart_read, 0)) {
+    /* Invalid player or missing write callback. */
+}
 ```
 
-**Note:**
-_This Arduino HAL is simplied, the included HAL does `SoftwareSerial`
-as well which adds some complexity that I don't think should be in an example
-like this. You can find the real HAL [here](src/DYPlayerArduino.cpp)._
+The callback structure is:
 
-Steps:
-
-1. Define a class that extends the `DY::DYPlayer` class.
-1. Define constructors that set up the serial port. On some platforms you will
-   need to setup your serial port after some other things are initialized, e.g.
-   on Arduino, then define an additional `DY::Player::begin()` (or
-   e.g. `DY::Player::init()`) to finish initialisation.
-1. Define functions for `serialWrite()` and `serialRead()` according to the
-   board and the framework you use.
-
-## Memory use
-
-This library uses a little memory as possible to play nice with micro
-controllers with small RAM, such as Atmega328 (used in many Arduino boards),
-which has 2K RAM.
-
-To keep memory usage low, avoid using the functions that take `char *path`
-arguments. If you do not intend to play sounds by file name, you can skip the
-rest of this chapter. If you do, keep reading.
-
-The `char *path` arguments will always use more RAM than the `uint16_t`
-arguments, obviously but this is compounded by an odd requirement of the player
-modules. I.e. the paths to files on flash/SD card have to be defined different
-than usual, e.g.
-`/SONGS/IN/A/PATH/00001.MP3` should be specified as:
-`/SONGS*/IN*/A*/PATH*/00001*MP3`
-
-Analysing this:
-
-- Paths normally end in `/` but an additional `*` is required;
-- except for the root level.
-- Period in before the extension should be replaced by `*` as well.
-- The new path is 4 bytes longer than the specified path.
-
-The conversion is done by the library but this means that the path is allocated
-twice in memory, once by you, once by the library and the latter needs to have
-more capacity (in this case 4 bytes). The libray can keep the second string's
-memory in 2 ways: in heap or in stack memory.
-
-Stack memory is not dynamic, i.e.: the required amount of bytes should be known
-at compile time, which means more than the expected amount of bytes should
-already be reserved, which is wasteful. Aside from being wastelful, the path
-could be really short (most likely, e.g. `/00001.MP3` or something like
-`/SFX/00001.MP3`), or it could be really long..
-
-Putting the path in dynamically assigned heap memory fixes all of that, the
-library can count the amount of `/` in the path and make a variable exactly
-long enough for the converted path. However we should always be wary of
-[Heap fragmentation](https://cpp4arduino.com/2018/11/06/what-is-heap-fragmentation.html).
-In short to assign memory, a contgious block of it needs to be available.
-Assigning chunks of memory and then freeing them leaves holes in the memory that
-may be be too small to use again later. This will gradually lead to problems.
-You may need to reset your device after several minutes, hours or days because
-the program can't allocate heap memory any more.
-
-So, by default the library will reserve stack memory. The amount is based on
-some assumptions:
-
-- The manual of the sound modules states that paths and file names may be up to
-  8 characters long.
-- The library assumes that you will not nest more than 2 directories.
-- Extentions can be `.MP3` or `.WAV`, so always 4 bytes.
-
-So we come to:
-
-```
-/ dir */ dir */ file * ext
-
-1 + 8 + 2 + 8 + 2 + 8 + 1 + 4 = 34
+```c
+typedef void (*dy_uart_write_fn_t)(const uint8_t *buffer, uint8_t size);
+typedef bool (*dy_uart_read_fn_t)(uint8_t *buffer, uint8_t size);
 ```
 
-Let's round that up to `40` and you could even have some more nesting as long as
-the directory names are small enough.
+`DYPlayer_init()` stores the callbacks and option flags in `dy_player_t`. It
+returns `false` when `player` or `uart_write_fn` is `NULL`. Response-reading
+functions return their documented failure value when `uart_read` is `NULL`,
+when the callback fails, or when the response checksum is invalid.
 
-The library will therefore define `DY_MAX_PATH_LEN` as `40`, you can override that
-if you need more, or if you want to save a few bytes of precious memory. Note
-that `40` is the maximum length of the path **after conversion** to the funcky
-format required by the module. The amount of bytes you may use with this default
-is set at `36`. This max value is check when function have char parameter and exit if the **converted path** have more than `DY_MAX_PATH_LEN`.
+Available options can be combined with bitwise OR:
 
+| Option              | Value  | Meaning |
+| :------------------ | :----- | :------ |
+| `OPTION_AUX_IN`     | `0x01` | The module has an AUX input. |
+| `OPTION_ONLY_FLASH` | `0x02` | Reject commands targeting USB or SD. |
 
-## Arduino
+For example:
 
-Because this is included, on Arduino you can just include the
-`DYPlayerArduino.h` header file and use the module.
-
-You may use any Serial port on the board, you will have to pass it to the
-`begin()` function. Like this:
-
-```c++
-DY::Player player(&Serial2);
+```c
+uint8_t options = OPTION_AUX_IN | OPTION_ONLY_FLASH;
+DYPlayer_init(&player, uart_write, uart_read, options);
 ```
 
-To find out how to use the Arduino HAL see
-[PlaySoundByNumber.ino](examples/PlaySoundByNumber/PlaySoundByNumber.ino).
+## UART protocol
 
-## ESP-IDF
+Commands use this frame format:
 
-Because this is included, on Arduino you can just include the
-`DYPlayerESP32.h` header file and use the module.
-
-You may use any Serial port on the board, and any 2 pins for TX and RX.
-E.g.: user `UART_NUM_2` on pins TX: 18, RX: 19:
-
-```c++
-DY::Player player(UART_NUM_2, 18, 19);
+```text
+AA [command] [length] [data...] [checksum]
 ```
 
-You can find an example here:
-[PlaySounds.cpp](examples/esp32/PlaySounds.cpp).
-
-## API
-
-The library abstracts sending binary commands to the module. There is manual
-for the module floating around the web, which I am not sure is copy righted or
-not, so I won't upload it here or link to it. Just google
-`DY-SV17F manual & Datasheet` and you will probably find it.
-
-The manual doesn't clearly name any of the commands so I came up with class
-method names myself. The manual does contain a command description so I
-included that in the list below. Notably the "check" commands, are named as
-"get" commands to incidate they retrieve information from the module. Setting
-you can change are applied by "set" commands.
-
-### Set methods
-
-Setting or playing any sound is not confirmed by the module so if you need
-confirmation that the module is doing what is expected, you need to use one of
-the get functions to verify that it's doing what you told it to. E.g. when you
-play a sound, you can consequently call
-[`DY::DYPlayer::getPlayingSound()`](#uint16_t-dydyplayergetplayingsound) to
-check that it worked.
-
-### Get methods
-
-Get methods will send a command to the module and wait for an answer. If an
-answer is not received a timeout will expire and subsequently an they will
-return `0` for sound counts,
-
-### Command/method list
-
-| Command (from the manual)          |  byte  | Method name                                                                                                |
-| :--------------------------------- | :----: | :--------------------------------------------------------------------------------------------------------- |
-| Check the play state               | `0x01` | [`DY::PlayState::play_state_t` **DY::DYPlayer::checkPlayState**](#dyplay_state_t-dydyplayercheckplaystate) |
-| Play                               | `0x02` | [`void` **DY::DYPlayer::play**](#void-dydyplayerplay)                                                      |
-| Pause                              | `0x03` | [`void` **DY::DYPlayer::pause**](#void-dydyplayerpause)                                                    |
-| Stop                               | `0x04` | [`void` **DY::DYPlayer::stop**](#void-dydyplayerstop)                                                      |
-| Previous Music                     | `0x05` | [`void` **DY::DYPlayer::previous**](#void-dydyplayerprevious)                                              |
-| Next music                         | `0x06` | [`void` **DY::DYPlayer::next**](#void-dydyplayernext)                                                      |
-| Play specified music               | `0x07` | [`void` **DY::DYPlayer::playSpecified**](#void-dydyplayerplayspecified)                                    |
-| Specified device and path play     | `0x08` | [`void` **DY::DYPlayer::playSpecifiedDevicePath**](#void-dydyplayerplayspecifieddevicepath)                |
-| Check Current Playing Device       | `0x0a` | [`DY::Device::device_t` **DY::DYPlayer::getPlayingDevice**](#dydevice_t-dydyplayergetplayingdevice)        |
-| Switch to selected device          | `0x0b` | [`void` **DY::DYPlayer::setPlayingDevice**](#void-dydyplayersetplayingdevice)                              |
-| Check Number Of all Music          | `0x0c` | [`uint16_t` **DY::DYPlayer::getSoundCount**](#uint16_t-dydyplayergetsoundcount)                            |
-| Check Current Music                | `0x0d` | [`uint16_t` **DY::DYPlayer::getPlayingSound**](#uint16_t-dydyplayergetplayingsound)                        |
-| Previous folder directory (first)  | `0x0e` | [`void` **DY::DYPlayer::previousDir**](#void-dydyplayerpreviousdir)                                        |
-| Previous folder directory (last)   | `0x0f` | [`void` **DY::DYPlayer::previousDir**](#void-dydyplayerpreviousdir)                                        |
-| End playing                        | `0x10` | [`void` **DY::DYPlayer::stopInterlude**](#void-dydyplayerstopinterlude)                                    |
-| Check the first music in folder    | `0x11` | [`uint16_t` **DY::DYPlayer::getFirstInDir**](#uint16_t-dydyplayergetfirstindir)                            |
-| Check Number of music in folder    | `0x12` | [`uint16_t` **DY::DYPlayer::getSoundCountDir**](#uint16_t-dydyplayergetsoundcountdir)                      |
-| Volume setting                     | `0x13` | [`void` **DY::DYPlayer::setVolume**](#void-dydyplayersetvolume)                                            |
-| Volume+                            | `0x14` | [`void` **DY::DYPlayer::volumeIncrease**](#void-dydyplayervolumeincrease)                                  |
-| Volume-                            | `0x15` | [`void` **DY::DYPlayer::volumeDecrease**](#void-dydyplayervolumedecrease)                                  |
-| Select specified file to interlude | `0x16` | [`void` **DY::DYPlayer::interludeSpecified**](#void-dydyplayerinterludespecified)                          |
-| Select specified path to interlude | `0x17` | [`void` **DY::DYPlayer::interludeSpecifiedDevicePath**](#void-dydyplayerinterludespecifieddevicepath)      |
-| Cycle mode setting                 | `0x18` | [`void` **DY::DYPlayer::setCycleMode**](#void-dydyplayersetcyclemode)                                      |
-| Cycle times setting                | `0x19` | [`void` **DY::DYPlayer::setCycleTimes**](#void-dydyplayersetcycletimes)                                    |
-| Set EQ                             | `0x1a` | [`void` **DY::DYPlayer::setEq**](#void-dydyplayerseteq)                                                    |
-| Combination play setting           | `0x1b` | [`void` **DY::DYPlayer::combinationPlay**](#void-dydyplayercombinationplay)                                |
-| End Combination play               | `0x1c` | [`void` **DY::DYPlayer::endCombinationPlay**](#void-dydyplayerendcombinationplay)                          |
-| Select file but do not play        | `0x1f` | [`void` **DY::DYPlayer::select**](#void-dydyplayerselect)                                                  |
-
-UART commands are formed by:
-
-`aa [cmd] [len] [byte_1..n] [crc]`
-
-Where:
-
-- `aa` Start a command
-- `[cmd]` A command from the list, e.g. `01` to check the play state.
-- `[len]` The length of the amount of bytes sent as an argument.
-- `[byte_1..n]` All bytes uses as arguments, some argument are 1 byte, such as
-  for selecting the storage device, some are 2 bytes long such as specifying a
-  song by number (`uint16_t` value, between `0` and `65535`), sometimes it's a
-  combination, or a path.
-- `[crc]` The sum of all bytes in the entire command as a `uint8_t`.
-
-### API documentation
-
-#### [`DY::play_state_t`](#typedef-enum-class-dyplay_state_t) DY::DYPlayer::checkPlayState(..)
-
-Check the current play state can, be called at any time.
-
-|            | **Type**                                                 | **Name** | **Description**                                                                                                              |
-| :--------- | :------------------------------------------------------- | :------- | :--------------------------------------------------------------------------------------------------------------------------- |
-| **return** | [`DY::play_state_t`](#typedef-enum-class-dyplay_state_t) |          | Play status: A [`DY::PlayState`](#typedef-enum-class-dyplay_state_t) e.g DY::PlayState::Stopped, DY::PlayState::Playing, etc |
-
-#### `void` DY::DYPlayer::play(..)
-
-Play the currently selected file from the start.
-
-#### `void` DY::DYPlayer::pause(..)
-
-Set the play state to paused.
-
-#### `void` DY::DYPlayer::stop(..)
-
-Set the play state to stopped.
-
-#### `void` DY::DYPlayer::previous(..)
-
-Play the previous file.
-
-#### `void` DY::DYPlayer::next(..)
-
-Play the next file.
-
-#### `void` DY::DYPlayer::playSpecified(..)
-
-Play a sound file by number, number sent as 2 bytes.
-
-|           | **Type**   | **Name** | **Description**                              |
-| :-------- | :--------- | :------- | :------------------------------------------- |
-| **param** | `uint16_t` | `number` | number of the file, e.g. `1` for `00001.mp3` |
-
-#### `void` DY::DYPlayer::playSpecifiedDevicePath(..)
-
-Play a sound file by device and path.
-Path may consist of up to 2 nested directories of 8 bytes long and a
-file name of 8 bytes long excluding the extension of 4 bytes long.
-If your directory names are shorter you can use more nesting. Use no
-more than 36 bytes for your paths. If you require more, check the
-readme, chapter: Memory use.
-
-|           | **Type**                                         | **Name** | **Description**                                                                                            |
-| :-------- | :----------------------------------------------- | :------- | :--------------------------------------------------------------------------------------------------------- |
-| **param** | [`DY::device_t`](#typedef-enum-class-dydevice_t) | `device` | device A [`DY::Device member`](#typedef-enum-class-dydevice_t) e.g `DY::Device::Flash` or `DY::Device::Sd` |
-| **param** | `char`                                           | `path`   | path pointer to the path of the file (asbsolute)                                                           |
-
-#### [`DY::device_t`](#typedef-enum-class-dydevice_t) DY::DYPlayer::getPlayingDevice(..)
-
-Get the storage device that is currently used for playing sound files.
-
-|            | **Type**                                         | **Name** | **Description**                                                                                     |
-| :--------- | :----------------------------------------------- | :------- | :-------------------------------------------------------------------------------------------------- |
-| **return** | [`DY::device_t`](#typedef-enum-class-dydevice_t) |          | a [`DY::Device` member](#typedef-enum-class-dydevice_t) e.g `DY::Device::Flash` or `DY::Device::Sd` |
-
-#### `void` DY::DYPlayer::setPlayingDevice(..)
-
-Set the device number the module should use.
-Tries to set the device but no guarantee is given, use `getDevice()`
-to check the actual current storage device.
-
-|           | **Type**                                         | **Name** | **Description**                                                                                            |
-| :-------- | :----------------------------------------------- | :------- | :--------------------------------------------------------------------------------------------------------- |
-| **param** | [`DY::device_t`](#typedef-enum-class-dydevice_t) | `device` | device A [`DY::Device` member](#typedef-enum-class-dydevice_t) e.g `DY::Device::Flash` or `DY::Device::Sd` |
-
-#### `uint16_t` DY::DYPlayer::getSoundCount(..)
-
-Get the amount of sound files on the current storage device.
-
-|            | **Type**   | **Name** | **Description**       |
-| :--------- | :--------- | :------- | :-------------------- |
-| **return** | `uint16_t` |          | number of sound files |
-
-#### `uint16_t` DY::DYPlayer::getPlayingSound(..)
-
-Get the currently playing file by number.
-
-|            | **Type**   | **Name** | **Description**                      |
-| :--------- | :--------- | :------- | :----------------------------------- |
-| **return** | `uint16_t` |          | number of the file currently playing |
-
-#### `void` DY::DYPlayer::previousDir(..)
-
-Select previous directory and start playing the first or last song.
-
-|           | **Type**         | **Name** | **Description**                                                     |
-| :-------- | :--------------- | :------- | :------------------------------------------------------------------ |
-| **param** | `playDirSound_t` | `song`   | song Play `DY::PreviousDir::FirstSound` o DY::PreviousDir::LastSoun |
-
-#### `uint16_t` DY::DYPlayer::getFirstInDir(..)
-
-Get number of the first song in the currently selected directory.
-
-|            | **Type**   | **Name** | **Description**                                              |
-| :--------- | :--------- | :------- | :----------------------------------------------------------- |
-| **return** | `uint16_t` |          | number of the first song in the currently selected directory |
-
-#### `uint16_t` DY::DYPlayer::getSoundCountDir(..)
-
-Get the amount of sound files in the currently selected directory.
-NOTE: Excluding files in sub directories.
-
-|            | **Type**   | **Name** | **Description**                                       |
-| :--------- | :--------- | :------- | :---------------------------------------------------- |
-| **return** | `uint16_t` |          | number of sound files in currently selected directory |
-
-#### `void` DY::DYPlayer::setVolume(..)
-
-Set the playback volume between 0 and 30.
-Default volume if not set: 20.
-
-|           | **Type**  | **Name** | **Description**     |
-| :-------- | :-------- | :------- | :------------------ |
-| **param** | `uint8_t` | `volume` | volume to set (0-30 |
-
-#### `void` DY::DYPlayer::volumeIncrease(..)
-
-Increase the volume.
-
-#### `void` DY::DYPlayer::volumeDecrease(..)
-
-Decrease the volume.
-
-#### `void` DY::DYPlayer::interludeSpecified(..)
-
-Play an interlude file by device and number, number sent as 2 bytes.
-Note from the manual: "Music interlude" only has level 1. Continuous
-interlude will cover the previous interlude (the interlude will be
-played immediately). When the interlude is finished, it will return to
-the first interlude breakpoint and continue to play.
-
-|           | **Type**                                         | **Name** | **Description**                                                                                            |
-| :-------- | :----------------------------------------------- | :------- | :--------------------------------------------------------------------------------------------------------- |
-| **param** | [`DY::device_t`](#typedef-enum-class-dydevice_t) | `device` | device A [`DY::Device member`](#typedef-enum-class-dydevice_t) e.g `DY::Device::Flash` or `DY::Device::Sd` |
-| **param** | `uint16_t`                                       | `number` | number of the file, e.g. `1` for `00001.mp3`                                                               |
-
-#### `void` DY::DYPlayer::interludeSpecifiedDevicePath(..)
-
-Play an interlude by device and path.
-Note from the manual: "Music interlude" only has level 1. Continuous
-interlude will cover the previous interlude (the interlude will be
-played immediately). When the interlude is finished, it will return to
-the first interlude breakpoint and continue to play.
-
-Path may consist of up to 2 nested directories of 8 bytes long and a
-file name of 8 bytes long excluding the extension of 4 bytes long.
-If your directory names are shorter you can use more nesting. Use no
-more than 36 bytes for your paths. If you require more, check the
-readme, chapter: Memory use.
-
-|           | **Type**                                         | **Name** | **Description**                                                                                            |
-| :-------- | :----------------------------------------------- | :------- | :--------------------------------------------------------------------------------------------------------- |
-| **param** | [`DY::device_t`](#typedef-enum-class-dydevice_t) | `device` | device A [`DY::Device member`](#typedef-enum-class-dydevice_t) e.g `DY::Device::Flash` or `DY::Device::Sd` |
-| **param** | `char`                                           | `path`   | path pointer to the path of the file (asbsolute)                                                           |
-
-#### `void` DY::DYPlayer::stopInterlude(..)
-
-Stop the interlude and continue playing.
-Will also stop the current sound from playing if interlude is not
-active.
-
-#### `void` DY::DYPlayer::setCycleMode(..)
-
-Sets the cycle mode.
-See [`DY::play_mode_t`](#typedef-enum-class-dyplay_mode_t) for modes
-and meaning.
-
-|           | **Type**      | **Name** | **Description**            |
-| :-------- | :------------ | :------- | :------------------------- |
-| **param** | `play_mode_t` | `mode`   | mode The cycle mode to set |
-
-#### `void` DY::DYPlayer::setCycleTimes(..)
-
-Set how many cycles to play when in cycle modes 0, 1 or 4 (repeat
-modes).
-
-|           | **Type**   | **Name** | **Description**                         |
-| :-------- | :--------- | :------- | :-------------------------------------- |
-| **param** | `uint16_t` | `cycles` | cycles The cycle count for repeat modes |
-
-#### `void` DY::DYPlayer::setEq(..)
-
-Set the equalizer setting.
-See [`DY::eq_t`](#typedef-enum-class-dyeq_t) for settings.
-
-|           | **Type**                                 | **Name** | **Description**          |
-| :-------- | :--------------------------------------- | :------- | :----------------------- |
-| **param** | [`DY::eq_t`](#typedef-enum-class-dyeq_t) | `eq`     | eq The equalizer setting |
-
-#### `void` DY::DYPlayer::select(..)
-
-Select a sound file without playing it.
-
-|           | **Type**   | **Name** | **Description**                              |
-| :-------- | :--------- | :------- | :------------------------------------------- |
-| **param** | `uint16_t` | `number` | number of the file, e.g. `1` for `00001.mp3` |
-
-#### `void` DY::DYPlayer::combinationPlay(..)
-
-Combination play allows you to make a playlist of multiple sound files.
-
-You could use this to combine numbers e.g.: "fourthy-two" where you
-have samples for "fourthy" and "two".
-
-This feature has a particularly curious parameters, you have to
-specify the sound files by name, they have to be named by 2 numbers
-and an extension, e.g.: `01.mp3` and specified by `01`. You should
-pass them as an array pointer. You need to put the files into a
-directory that can be called `DY`, `ZH or `XY`, you will have to check
-the manual that came with your module, or try all of them. There may
-well be more combinations! Also see
-[Loading sound files](#loading-sound-files).
-
-E.g.
-
-```cpp
-const char * sounds[2][3] = { "01", "02" };
-DY::DYPlayer::combinationPlay(sounds, 2);
+- `AA` is the start byte (`0xAA`).
+- `command` identifies the operation.
+- `length` is the number of data bytes.
+- `data` contains the command arguments.
+- `checksum` is the 8-bit sum of every preceding frame byte.
+
+For example, playing file number `1` sends command `0x07` with two data bytes:
+
+```text
+AA 07 02 00 01 checksum
 ```
 
-|           | **Type**  | **Name** | **Description**                                                           |
-| :-------- | :-------- | :------- | :------------------------------------------------------------------------ |
-| **param** | `char`    | `sounds` | sounds An array of char[2] containing the names of sounds t play in order |
-| **param** | `uint8_t` | `len`    | len The length of the passed array                                        |
+The checksum is allowed to wrap at 8 bits. Responses are validated in the
+same way before their values are returned to the application.
 
-#### `void` DY::DYPlayer::endCombinationPlay(..)
+## Devices and return values
 
-End combination play.
+Storage device constants are plain C values of type `device_t`:
 
-#### typedef enum class DY::device_t
+| Constant            | Value  | Meaning |
+| :------------------ | :----- | :------ |
+| `DEVICE_USB`        | `0x00` | USB storage. |
+| `DEVICE_SD`         | `0x01` | SD card. |
+| `DEVICE_FLASH`      | `0x02` | On-board Flash storage. |
+| `DEVICE_FAIL`       | `0xFE` | UART or response failure. |
+| `DEVICE_NO_DEVICE`  | `0xFF` | No storage device detected. |
 
-Storage devices reported by module and to choose from when selecting a
-storage device.
+Play state constants are values of type `play_state_t`:
 
-| const                  | value  | description                                            |
-| :--------------------- | :----- | :----------------------------------------------------- |
-| `DY::Device::Usb`      | `0x00` | USB Storage device.                                    |
-| `DY::Device::Sd`       | `0x01` | SD Card.                                               |
-| `DY::Device::Flash`    | `0x02` | Onboard flash chip (usually winbond 32, 64Mbit flash). |
-| `DY::Device::Fail`     | `0xfe` | UART failure, can't be `-1` (so this can be uint8_t).  |
-| `DY::Device::NoDevice` | `0xff` | No storage device is online.                           |
+| Constant             | Value | Meaning |
+| :------------------- | :---- | :------ |
+| `PLAY_STATE_FAIL`    | `-1`  | UART or checksum failure. |
+| `PLAY_STATE_STOPPED` | `0`   | Playback stopped. |
+| `PLAY_STATE_PLAYING` | `1`   | Playback active. |
+| `PLAY_STATE_PAUSED`  | `2`   | Playback paused. |
 
-This enum class is based off uint8_t.
+Numeric response functions return `0` on failure. Consequently, callers that
+need to distinguish a valid zero from an error should also check the UART or
+perform an independent device-status check.
 
-#### typedef enum class DY::play_state_t
+## Command reference
 
-The current module play state.
+The command codes used by the PIC implementation are:
 
-| const                    | value | description                                         |
-| :----------------------- | :---- | :-------------------------------------------------- |
-| `DY::PlayState::Fail`    | `-1`  | UART Failure, can be a connection or a CRC problem. |
-| `DY::PlayState::Stopped` | `0`   |                                                     |
-| `DY::PlayState::Playing` | `1`   |                                                     |
-| `DY::PlayState::Paused`  | `2`   |                                                     |
+| Command                         | Code |
+| :------------------------------ | :--- |
+| Check play state                | `0x01` |
+| Play                            | `0x02` |
+| Pause                           | `0x03` |
+| Stop                            | `0x04` |
+| Previous music                 | `0x05` |
+| Next music                     | `0x06` |
+| Play specified music            | `0x07` |
+| Play specified device and path  | `0x08` |
+| Get playing device              | `0x0A` |
+| Set playing device              | `0x0B` |
+| Get sound count                | `0x0C` |
+| Get playing sound              | `0x0D` |
+| Previous directory              | `0x0E` or `0x0F` |
+| Stop interlude                 | `0x10` |
+| Get first sound in directory    | `0x11` |
+| Get directory sound count      | `0x12` |
+| Set volume                     | `0x13` |
+| Increase volume                | `0x14` |
+| Decrease volume                | `0x15` |
+| Play specified interlude       | `0x16` |
+| Play interlude by path         | `0x17` |
+| Set cycle mode                 | `0x18` |
+| Set cycle times                | `0x19` |
+| Set equalizer                 | `0x1A` |
+| Combination play               | `0x1B` |
+| End combination play           | `0x1C` |
+| Select specified sound         | `0x1F` |
 
-This enum class is based off int8_t.
+## Playback and file naming
 
-#### typedef enum class DY::eq_t
+For normal playback, files are commonly named sequentially:
 
-Equalize settings.
-
-| const             | value  |
-| :---------------- | :----- |
-| `DY::Eq::Normal`  | `0x00` |
-| `DY::Eq::Pop`     | `0x01` |
-| `DY::Eq::Rock`    | `0x02` |
-| `DY::Eq::Jazz`    | `0x03` |
-| `DY::Eq::Classic` | `0x04` |
-
-This enum class is based off uint8_t.
-
-#### typedef enum class DY::play_mode_t
-
-Play modes are basically whatever you commonly find on a media player,
-i.e.:
-Repeat 1, Repeat all, Repeat list (dir), playlist (by dir), random play.
-
-The default is perhaps somewhat unexpected: `DY::PlayMode::OneOff`. Often
-these modules will be used in toys or information displays where you can
-press a button and hear a corresponding sound. To get default media player
-behaviour, you should probably set `DY::PlayMode::Sequence` to just continue
-playing the next song until all are played or skipped, then stop.
-
-| const                       | value  | description                                                   |
-| :-------------------------- | :----- | :------------------------------------------------------------ |
-| `DY::PlayMode::Repeat`      | `0x00` | Play all music in sequence, and repeat.                       |
-| `DY::PlayMode::RepeatOne`   | `0x01` | Repeat current sound.                                         |
-| `DY::PlayMode::OneOff`      | `0x02` | Play sound file and stop.                                     |
-| `DY::PlayMode::Random`      | `0x03` | Play random sound file.                                       |
-| `DY::PlayMode::RepeatDir`   | `0x04` | Repeat current directory.                                     |
-| `DY::PlayMode::RandomDir`   | `0x05` | Play random sound file in current folder.                     |
-| `DY::PlayMode::SequenceDir` | `0x06` | Play all sound files in current folder in sequence, and stop. |
-| `DY::PlayMode::Sequence`    | `0x07` | Play all sound files on device in sequence, and stop.         |
-
-## Loading sound files
-
-### Normal Playback
-
-For normal playback of sound files, I recommend you name your files
-sequentially and put them in the root directory of the drive unless you need
-something more fancy. The numbering should be as follows:
-
-```
+```text
 00001.mp3
 00002.mp3
 00003.mp3
@@ -653,104 +215,209 @@ something more fancy. The numbering should be as follows:
 65535.mp3
 ```
 
-#### Important: files do not play in order of named sequence
+`DYPlayer_playSpecified()` sends a numeric file index. The module may use the
+order in which files were written to the storage device rather than the
+numeric filename itself. File number `1` therefore does not necessarily mean
+the file literally named `00001.mp3`.
 
-The [`DY::DYPlayer::playSpecified`](#void-dydyplayerplayspecified)
-function will **not** necessarily play the sound file named `00001.MP3` when
-asked to play sound file `1`. The module will look for the first sound file
-found in the filesystem. It's not using the file name, neither does it order by
-file name. To be sure the sound files play in the expected order:
+For predictable ordering:
 
-1. Empty the storage device.
-2. Make sure there aren't any trash files on the storage device.
-3. Copy the files in the order they should be played (it helps to have them
-   named sequentially, sort by name and copy the files, usually they will be
-   copied in sequence order.
+1. Empty or format the storage device.
+2. Remove unrelated or temporary files.
+3. Copy files in the intended playback order.
 
-Please don't file bugs stating there is a bug in the
-[`DY::DYPlayer::playSpecified`](#void-dydyplayerplayspecified) function
-because `00001.MP3` doesn't play when `1` is sent to the module. It's not a bug
-in this library, it's how the module works. If you find that the above
-information is not correct, or if you have suggestions for improvements, please
-do create an issue..
+## Path playback
 
-#### By file path
+The public API accepts a normal, null-terminated C string:
 
-You can also use paths and filenames but neither directory nor filename should
-exceed 8 bytes. You can put the files in directories, but don't make a lot of
-nested directories. Files in the root are played by specifying the path as
-`/00001.MP3` (note the `/`).
+```c
+DYPlayer_playSpecifiedDevicePath(
+    &player,
+    DEVICE_FLASH,
+    "/SONGS/FILE.MP3"
+);
+```
 
-#### Use normal paths
+The module protocol requires a converted path. The PIC implementation performs
+this conversion while sending, without allocating a second path buffer:
 
-In the module's manual you can find that paths are required to be separated by
-`*/` and `*` in place of `.`, upper case characters, etc., etc. Forget about
-all of that, just supply paths as you are used to, case insensitive, no funny
-character substitutions. The library will handle the required conversions.
+```text
+/SONGS/IN/A/PATH/00001.MP3
+/SONGS*/IN*/A*/PATH*/00001*MP3
+```
 
-### Combination play
+The initial `/` is preserved. Every later `/` is sent as `*/`, every `.` is
+sent as `*`, and letters are converted to uppercase. The transformed path
+length includes the inserted `*` bytes and must not exceed
+`DY_MAX_PATH_LEN` (`36` by default). Oversized, empty or `NULL` paths are
+rejected before transmission.
 
-For combination play, you will have to add files with names of 2 characters plus
-the extension, e.g.: `01.mp3` into a directory that can be called `XY`, `ZH, `DY`, you will have to check the manual that came with your module, or try all of them. There may well be more options! Most manuals claim it should be `DY`but most people reported that`XY`actually works, so try:`/DY/##.MP3` first.
+The module manual commonly limits directory and file components to eight
+characters. Keep paths short and avoid unnecessary nesting. The public path
+functions do not return an error status, so applications should validate path
+lengths before calling them when the result matters.
 
-If you find out what the letter combination on your board is, please add an
-issue with the directory name and the module model name, so I can add it here
-to help others.
+When `OPTION_ONLY_FLASH` is enabled, path and interlude commands targeting
+`DEVICE_USB` or `DEVICE_SD` are rejected. They are not silently redirected to
+Flash.
 
-## ONE_LINE support?
+## Combination play
 
-This library only supports UART at this time. It should be relatively straight
-forward to add the `ONE_Line` protocol as found in the manual. Note however that
-the entire communication protocol is different from the UART protocol. So there
-is no particular benefit to adding it to this library. That said, if you plan
-to implement it, we could discuss merging it with this library for convenience.
+Combination play creates a playlist from two-character filenames. For example,
+use files named `01.mp3`, `A2.mp3` and `B7.mp3` in the special directory
+required by the module firmware. Common directory names are `DY`, `XY` and
+`ZH`; the correct name depends on the module.
 
-## Runnning this library on PIC
+The PIC API uses a contiguous array of two-byte entries:
 
-It's not supported, however there you can find a port
-[here](https://github.com/SnijderC/dyplayer/issues/19) by @DoubleTop12, proving it's possible with
-some effort.
+```c
+const char sounds[][2] = {
+    {'0', '1'},
+    {'A', '2'},
+    {'B', '7'}
+};
+
+DYPlayer_combinationPlay(&player, sounds, 3);
+```
+
+The module receives the ASCII bytes `0`, `1`, `A`, `2`, `B` and `7`. A C string
+terminator is neither required nor transmitted. The number of entries must not
+exceed `127`.
+
+## Directories, interludes and controls
+
+The API also provides:
+
+- `DYPlayer_setPlayingDevice()` to select USB, SD or Flash;
+- `DYPlayer_previousDir()` with `PREVIOUS_DIR_FIRST_SOUND` or
+  `PREVIOUS_DIR_LAST_SOUND`;
+- `DYPlayer_getFirstInDir()` and `DYPlayer_getSoundCountDir()`;
+- `DYPlayer_interludeSpecified()` and
+  `DYPlayer_interludeSpecifiedDevicePath()`;
+- `DYPlayer_stopInterlude()`;
+- `DYPlayer_setVolume()`, `DYPlayer_volumeIncrease()` and
+  `DYPlayer_volumeDecrease()`;
+- `DYPlayer_setCycleMode()` and `DYPlayer_setCycleTimes()`;
+- `DYPlayer_setEq()`;
+- `DYPlayer_select()` and `DYPlayer_endCombinationPlay()`.
+
+An interlude temporarily plays a sound over the current playback. The module
+manual describes this as a single interlude level; a new interlude can replace
+the active one. `DYPlayer_stopInterlude()` stops the interlude and resumes
+normal playback when supported by the module.
+
+Volume is normally in the range `0` to `30`, with a typical default of `20`.
+The cycle-time command applies to the repeat modes.
+
+## Enumerations
+
+Equalizer values:
+
+| Constant       | Value |
+| :------------- | :---- |
+| `EQ_NORMAL`    | `0x00` |
+| `EQ_POP`       | `0x01` |
+| `EQ_ROCK`      | `0x02` |
+| `EQ_JAZZ`      | `0x03` |
+| `EQ_CLASSIC`   | `0x04` |
+
+Playback modes:
+
+| Constant               | Value | Meaning |
+| :--------------------- | :---- | :------ |
+| `PLAY_MODE_REPEAT`     | `0x00` | Repeat all music. |
+| `PLAY_MODE_REPEAT_ONE` | `0x01` | Repeat the current sound. |
+| `PLAY_MODE_ONE_OFF`    | `0x02` | Play once and stop. |
+| `PLAY_MODE_RANDOM`     | `0x03` | Play random sounds. |
+| `PLAY_MODE_REPEAT_DIR` | `0x04` | Repeat the current directory. |
+| `PLAY_MODE_RANDOM_DIR` | `0x05` | Play random sounds in the current directory. |
+| `PLAY_MODE_SEQUENCE_DIR` | `0x06` | Play the current directory in sequence, then stop. |
+| `PLAY_MODE_SEQUENCE`   | `0x07` | Play the device in sequence, then stop. |
+
+Previous-directory behavior:
+
+| Constant                    | Value | Meaning |
+| :-------------------------- | :---- | :------ |
+| `PREVIOUS_DIR_FIRST_SOUND`  | `0x00` | Start at the first sound. |
+| `PREVIOUS_DIR_LAST_SOUND`   | `0x01` | Start at the last sound. |
+
+## Public API
+
+All declarations are in `src/DYPlayer_PIC.h`.
+
+```c
+bool DYPlayer_init(dy_player_t *player,
+                   dy_uart_write_fn_t uart_write_fn,
+                   dy_uart_read_fn_t uart_read_fn,
+                   uint8_t options);
+
+play_state_t DYPlayer_getPlayState(dy_player_t *player);
+void DYPlayer_play(dy_player_t *player);
+void DYPlayer_pause(dy_player_t *player);
+void DYPlayer_stop(dy_player_t *player);
+void DYPlayer_previous(dy_player_t *player);
+void DYPlayer_next(dy_player_t *player);
+void DYPlayer_playSpecified(dy_player_t *player, uint16_t number);
+void DYPlayer_playSpecifiedDevicePath(dy_player_t *player,
+                                      device_t device,
+                                      const char *path);
+
+device_t DYPlayer_getPlayingDevice(dy_player_t *player);
+void DYPlayer_setPlayingDevice(dy_player_t *player, device_t device);
+uint16_t DYPlayer_getSoundCount(dy_player_t *player);
+uint16_t DYPlayer_getPlayingSound(dy_player_t *player);
+void DYPlayer_previousDir(dy_player_t *player, playDirSound_t song);
+uint16_t DYPlayer_getFirstInDir(dy_player_t *player);
+uint16_t DYPlayer_getSoundCountDir(dy_player_t *player);
+
+void DYPlayer_setVolume(dy_player_t *player, uint8_t volume);
+void DYPlayer_volumeIncrease(dy_player_t *player);
+void DYPlayer_volumeDecrease(dy_player_t *player);
+void DYPlayer_interludeSpecified(dy_player_t *player,
+                                 device_t device,
+                                 uint16_t number);
+void DYPlayer_interludeSpecifiedDevicePath(dy_player_t *player,
+                                           device_t device,
+                                           const char *path);
+void DYPlayer_stopInterlude(dy_player_t *player);
+void DYPlayer_setCycleMode(dy_player_t *player, play_mode_t mode);
+void DYPlayer_setCycleTimes(dy_player_t *player, uint16_t cycles);
+void DYPlayer_setEq(dy_player_t *player, eq_t eq);
+void DYPlayer_select(dy_player_t *player, uint16_t number);
+void DYPlayer_combinationPlay(dy_player_t *player,
+                              const char (*sounds)[2],
+                              uint8_t size);
+void DYPlayer_endCombinationPlay(dy_player_t *player);
+```
 
 ## Troubleshooting
 
-### No communication with the board
+### No communication
 
-- Check power is supplied to the module.
-- Check that TX on your Arduino board connects to RX on the module and vice
-  versa, check that you connected the serial lines through resistors if your
-  Arduino runs on 5V. See [Wiring the module](#wiring-the-module).
-- Check the configuration of the board, either by connecting the correct value
-  of resistors to the correct `CON#` pins or, if your board has them, the DIP
-  switches are set to the correct value. See
-  [Wiring the module](#wiring-the-module).
-- If you share the serial port between the computer for flashing and connecting
-  to the module, disconnect the cable (FTDI or USB cable) from the board before
-  booting it. Anything on the module TX line besides your Arduino board will
-  prevent data from being received.
-- Check there are compatible sound files on the modules storage device, maybe
-  it's connecting, but doesn't have a sound to play, use
-  [`DY::DYPlayer::playSpecified`](#void-dydyplayerplayspecified) to play
-  sound file `00001.MP3` because it's more fault tolerant than by path
-  functions.
+- Check module power and ground.
+- Check that PIC TX connects to module RX and PIC RX connects to module TX.
+- Check UART voltage levels and series resistors.
+- Check the `CON#` configuration or DIP switches.
+- Confirm that the callbacks use the correct hardware UART.
+- Ensure `uart_write` transmits every requested byte in order.
+- Ensure `uart_read` waits for the complete response and returns `true` only
+  when all requested bytes were received.
+- Disconnect any programmer or other UART device that shares the module UART.
 
 ### No sound
 
-- Check the speaker connection.
-- Check the volume control, some boards have a potentiometer you can turn.
-- Test the speaker on another device and see if it is operational.
-- Use the
-  [`DY::DYPlayer::getPlayingDevice`](#dydevice_t-dydyplayergetplayingdevice)
-  function to see if the device is responsive.
-- See the [loading sound files](#loading-sound-files) chapter and apply the
-  simplest file structure to see the wiring etc is correct before filing issues.
-- Check there are compatible sound files on the modules storage device maybe
-  it doesn't have a sound to play, use
-  [`DY::DYPlayer::playSpecified`](#void-dydyplayerplayspecified) to play
-  sound file `00001.MP3` because it's more fault tolerant than by path
-  functions.
+- Check the speaker connection and volume.
+- Verify that the storage device contains compatible files.
+- Start with `DYPlayer_playSpecified()` before testing path playback.
+- Remember that numeric playback follows storage write order, not necessarily
+  the visible filename number.
+- Check path spelling, path length and the transformed path format.
+- For combination play, check the two-character filenames and the special
+  directory name required by the module.
 
-### Unexpected behaviour
+### Response functions return failure
 
-- I asked the module to play `1` but `00001.MP3` is not played, I hear a
-  different sound. This is not a bug in this library, check:
-  [Important: files do not play in order of named sequence](#important-files-do-not-play-in-order-of-named-sequence)
+- Confirm that `uart_read` is not `NULL`.
+- Confirm that the callback reads exactly the requested number of bytes.
+- Check that the module response is not being consumed by another UART user.
+- Check the response checksum and UART baud/configuration.

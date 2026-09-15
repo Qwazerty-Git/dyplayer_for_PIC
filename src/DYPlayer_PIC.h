@@ -135,11 +135,12 @@ enum
   * Initialize the DYPlayer module.
   * @param player pointer to the `dy_player_t` structure.
   * @param uart_write_fn function pointer for UART write.
-  * @param uart_read_fn function pointer for UART read.
+  * @param uart_read_fn function pointer for UART read. Can be NULL if not used.
   * @param opt_aux_in_used indicates if the AUX input is used.
   * @param opt_only_flash indicates if only the flash storage is available.
+  * @return boolean indicating if the initialization was successful (true) or not (false).
   */
-void DYPlayer_init(dy_player_t *player, dy_uart_write_fn_t uart_write_fn, dy_uart_read_fn_t uart_read_fn, uint8_t options);
+bool DYPlayer_init(dy_player_t *player, dy_uart_write_fn_t uart_write_fn, dy_uart_read_fn_t uart_read_fn, uint8_t options);
 
 /**
   * Check the current play state can, be called at any time.
@@ -364,16 +365,21 @@ void DYPlayer_select(dy_player_t *player, uint16_t number);
   * [Loading sound files](#loading-sound-files).
   *
   * E.g.
-  * ```cpp
-  * const char * sounds[2][3] = { "01", "02" };
-  * DY::DYPlayer::combinationPlay(sounds, 2);
-  * ````
+  * ```c
+  * const char sounds[][2] = {
+  *   {'0', '1'},
+  *   {'0', '2'},
+  *   {'A', '7'}
+  * };
+  * DYPlayer_combinationPlay(&player, sounds, 3);
+  * ```
+  * Note: number of songs transmitted cannot exceed 127
   * @param player pointer to the `dy_player_t` structure.
   * @param sounds An array of char[2] containing the names of sounds to
   *        play in order.
   * @param size The length of the passed array.
   */
-void DYPlayer_combinationPlay(dy_player_t *player,const char *sounds[], uint8_t size);
+void DYPlayer_combinationPlay(dy_player_t *player,const char (*sounds)[2], uint8_t size);
 
 /**
   * End combination play.
