@@ -115,9 +115,10 @@ namespace DY
     if (transformed_len > DY_MAX_PATH_LEN) return false;
 
     uint8_t header[5];
+    uint8_t transformed_size = (uint8_t)transformed_len;
     header[0] = 0xAA;
     header[1] = command;
-    header[2] = transformed_len + 1; // + device byte
+    header[2] = (uint8_t)(transformed_size + 1u); // + device byte
     header[3] = (uint8_t)device;
     header[4] = (uint8_t)toupper((unsigned char)path[0]);
 
@@ -264,7 +265,7 @@ bool DYPlayer_init(dy_player_t *player, dy_uart_write_fn_t uart_write_fn, dy_uar
     uint8_t buffer[6];
     if (getResponse(player, buffer, 6))
     {
-      return (buffer[3] << 8) | buffer[4];
+      return (uint16_t)(((uint16_t)buffer[3] << 8) | (uint16_t)buffer[4]);
     }
     return 0;
   }
@@ -277,7 +278,7 @@ bool DYPlayer_init(dy_player_t *player, dy_uart_write_fn_t uart_write_fn, dy_uar
     uint8_t buffer[6];
     if (getResponse(player, buffer, 6))
     {
-      return (buffer[3] << 8) | buffer[4];
+      return (uint16_t)(((uint16_t)buffer[3] << 8) | (uint16_t)buffer[4]);
     }
     return 0;
   }
@@ -302,7 +303,7 @@ bool DYPlayer_init(dy_player_t *player, dy_uart_write_fn_t uart_write_fn, dy_uar
     uint8_t buffer[6];
     if (getResponse(player, buffer, 6))
     {
-      return (buffer[3] << 8) | buffer[4];
+      return (uint16_t)(((uint16_t)buffer[3] << 8) | (uint16_t)buffer[4]);
     }
     return 0;
   }
@@ -315,7 +316,7 @@ bool DYPlayer_init(dy_player_t *player, dy_uart_write_fn_t uart_write_fn, dy_uar
     uint8_t buffer[6];
     if (getResponse(player, buffer, 6))
     {
-      return (buffer[3] << 8) | buffer[4];
+      return (uint16_t)(((uint16_t)buffer[3] << 8) | (uint16_t)buffer[4]);
     }
     return 0;
   }
