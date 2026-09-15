@@ -32,6 +32,7 @@ namespace DY
 typedef uint8_t dy_option_t;
 enum
 {
+    OPTION_NONE       = 0x00,
     OPTION_AUX_IN     = 0x01,
     OPTION_ONLY_FLASH = 0x02
 };
