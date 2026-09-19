@@ -6,7 +6,7 @@ Microchip XC8.
 
 The implementation is hardware-independent at the UART boundary: the
 application supplies callbacks for transmitting and, when needed, receiving
-bytes. No dynamic allocation is used by the PIC port.
+one byte at a time. No dynamic allocation is used by the PIC port.
 
 The library supports the UART protocol only. It does not support the
 `ONE_Line` protocol.
@@ -71,26 +71,28 @@ updated here.
 
 ## Initialisation and UART callbacks
 
-The write callback is required. The read callback may be `NULL` when the
-application only uses commands that do not require a response.
+The write callback is required. It transmits one byte per call. The read
+callback may be `NULL` when the application only uses commands that do not
+require a response. It receives one byte per call and uses the timeout only
+when waiting for that byte.
 
 ```c
 #include "DYPlayer_PIC.h"
 
-static void uart_write(const uint8_t *buffer, uint8_t size)
+static void uart_write_byte(uint8_t value)
 {
-    /* Send exactly size bytes through the PIC UART. */
+  /* Send one byte through the PIC UART. */
 }
 
-static bool uart_read(uint8_t *buffer, uint8_t size, uint16_t timeout_ms)
+static bool uart_read_byte(uint8_t *value, uint16_t timeout_ms)
 {
-    /* Read exactly size bytes before returning true on success. */
+  /* Read one byte, or return false when timeout_ms expires. */
     return false;
 }
 
 dy_player_t player;
 
-if (!DYPlayer_init(&player, uart_write, uart_read, 0)) {
+if (!DYPlayer_init(&player, uart_write_byte, uart_read_byte, 0)) {
     /* Invalid player or missing write callback. */
 }
 ```
@@ -98,14 +100,22 @@ if (!DYPlayer_init(&player, uart_write, uart_read, 0)) {
 The callback structure is:
 
 ```c
-typedef void (*dy_uart_write_fn_t)(const uint8_t *buffer, uint8_t size);
-typedef bool (*dy_uart_read_fn_t)(uint8_t *buffer, uint8_t size, uint16_t timeout_ms);
+typedef void (*dy_uart_write_byte_fn_t)(const uint8_t value);
+typedef bool (*dy_uart_read_byte_fn_t)(uint8_t *value, uint16_t timeout_ms);
 ```
 
 `DYPlayer_init()` stores the callbacks and option flags in `dy_player_t`. It
 returns `false` when `player` or `uart_write_fn` is `NULL`. Response-reading
 functions return their documented failure value when `uart_read` is `NULL`,
-when the callback fails, or when the response checksum is invalid.
+when the callback fails, when the response command does not match the request,
+or when the response checksum is invalid.
+
+Before transmitting a command, the PIC implementation flushes bytes already
+waiting in the receive register. This prevents an unhandled response from a
+previous command from being mistaken for the response to the next request.
+The flush only removes bytes already available; it cannot remove a response
+that arrives later. Applications should therefore process responses for
+commands that generate them before starting a new transaction.
 
 Available options can be combined with bitwise OR:
 
@@ -348,8 +358,8 @@ All declarations are in `src/DYPlayer_PIC.h`.
 
 ```c
 bool DYPlayer_init(dy_player_t *player,
-                   dy_uart_write_fn_t uart_write_fn,
-                   dy_uart_read_fn_t uart_read_fn,
+                   dy_uart_write_byte_fn_t uart_write_fn,
+                   dy_uart_read_byte_fn_t uart_read_fn,
                    uint8_t options);
 
 play_state_t DYPlayer_getPlayState(dy_player_t *player);
@@ -391,6 +401,21 @@ void DYPlayer_combinationPlay(dy_player_t *player,
 void DYPlayer_endCombinationPlay(dy_player_t *player);
 ```
 
+## Response handling
+
+Response commands are read as complete fixed-size frames. The implementation
+searches for the `0xAA` start byte, checks the response command against the
+requested command, reads the expected frame size and validates the checksum.
+The frame length byte is not used to recover from an arbitrary mid-frame
+offset, because a byte read at the wrong position cannot reliably be treated
+as the length field. The receive flush before transmission is the mechanism
+used to discard stale bytes in the current PIC integration.
+
+Commands that do not expose a response through the public API are sent without
+waiting for one. If a specific module emits acknowledgements for such commands,
+the application or a module-specific extension must account for those
+acknowledgements before issuing the next response query.
+
 ## Troubleshooting
 
 ### No communication
@@ -400,9 +425,9 @@ void DYPlayer_endCombinationPlay(dy_player_t *player);
 - Check UART voltage levels and series resistors.
 - Check the `CON#` configuration or DIP switches.
 - Confirm that the callbacks use the correct hardware UART.
-- Ensure `uart_write` transmits every requested byte in order.
-- Ensure `uart_read` waits for the complete response and returns `true` only
-  when all requested bytes were received.
+- Ensure `uart_write_byte` transmits every byte in order.
+- Ensure `uart_read_byte` returns `true` only when one byte was received and
+  returns `false` when its timeout expires.
 - Disconnect any programmer or other UART device that shares the module UART.
 
 ### No sound
@@ -418,7 +443,7 @@ void DYPlayer_endCombinationPlay(dy_player_t *player);
 
 ### Response functions return failure
 
-- Confirm that `uart_read` is not `NULL`.
-- Confirm that the callback reads exactly the requested number of bytes.
+- Confirm that `uart_read_byte` is not `NULL`.
+- Confirm that the callback reads exactly one byte per successful call.
 - Check that the module response is not being consumed by another UART user.
 - Check the response checksum and UART baud/configuration.

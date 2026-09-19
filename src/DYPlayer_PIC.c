@@ -11,7 +11,7 @@
 #include <ctype.h>
 #include "DYPlayer_PIC.h"
 
-#define DY_UART_BYTE_TIMEOUT_MS  50 
+#define DY_UART_BYTE_TIMEOUT_MS  80 
 
 #ifdef __cplusplus
 namespace DY
@@ -51,6 +51,36 @@ namespace DY
   }
 
   /**
+    * Write a buffer to the UART interface of the player.
+    * @param player pointer to the player instance.
+    * @param buffer pointer to the bytes to write.
+    * @param size number of bytes to write.
+    * @return void.
+  */
+  static void uart_write_buffer(dy_player_t *player, const uint8_t *buffer, uint8_t size)
+  {
+      for (uint8_t i = 0; i < size; i++)
+      {
+          player->uart_write(buffer[i]);
+      }
+  }
+/**
+  * Function to flush any pending response from the UART interface.
+  * @param player pointer to the player instance.
+  * @return void.
+*/
+  static void flushResponse(dy_player_t *player)
+{
+    if (player == NULL || player->uart_read == NULL) return;
+
+    uint8_t discarded;
+
+    while (player->uart_read(&discarded, 0)) {
+        // Ignore les octets non réclamés.
+    }
+}
+  
+  /**
     * Send a command to the module, adds a CRC to the passed buffer.
     * @param dy_player pointer to the player instance.
     * @param command The command to send to the module.
@@ -62,23 +92,28 @@ namespace DY
     if (player == NULL || player->uart_write == NULL) return false;
     if (data == NULL && size > 0) size=0;
 
+    // On supprime d'éventuelles data en attente dans la pile de reception du PIC
+    flushResponse(player);
+
     uint8_t buffer[3];
     buffer[0] = 0xAA;
     buffer[1] = command;
     buffer[2] = size;
-    player->uart_write(buffer, sizeof(buffer));
+    uart_write_buffer(player, buffer, sizeof(buffer));
 
-    uint8_t crc[1]={0};
+    uint8_t crc[1] = {0};
     crc[0] = checksum(buffer, sizeof(buffer));
     if (data != NULL && size > 0) {
-      player->uart_write(data, size);
+      uart_write_buffer(player,data, size);
       crc[0] += checksum(data, size);
     }
 
-    player->uart_write(crc, 1);
+    uart_write_buffer(player, &crc[0], 1);
 
     return true;
   }
+
+
     
   /**
     * Send command with converted paths to  weird format required by the
@@ -115,6 +150,9 @@ namespace DY
 
     if (transformed_len > DY_MAX_PATH_LEN) return false;
 
+    // On supprime d'éventuelles data en attente dans la pile de reception du PIC
+    flushResponse(player);
+
     uint8_t header[5];
     uint8_t transformed_size = (uint8_t)transformed_len;
     header[0] = 0xAA;
@@ -125,7 +163,7 @@ namespace DY
 
     uint8_t crc = checksum(header, sizeof(header));
 
-    player->uart_write(header, sizeof(header));
+    uart_write_buffer(player, header, sizeof(header));
 
     for (uint8_t i = 1; i < size; i++) {
       char c = path[i];
@@ -133,19 +171,19 @@ namespace DY
       if (c == '.') {
         uint8_t byte = '*';
         crc += byte;
-        player->uart_write(&byte, 1);
+        uart_write_buffer(player, &byte, 1);
       } else if (c == '/') {
         uint8_t bytes[2] = { '*', '/' };
         crc += bytes[0] + bytes[1];
-        player->uart_write(bytes, sizeof(bytes));
+        uart_write_buffer(player, bytes, sizeof(bytes));
       } else {
         uint8_t byte = (uint8_t)toupper((unsigned char)c);
         crc += byte;
-        player->uart_write(&byte, 1);
+        uart_write_buffer(player, &byte, 1);
       }
     }
 
-    player->uart_write(&crc, 1);
+    uart_write_buffer(player, &crc, 1);
     return true;
   }
 /**
@@ -155,26 +193,47 @@ namespace DY
   * @param size size of the buffer.
   * @return true if the response is valid, false otherwise.
   */
-  bool getResponse(dy_player_t *player,uint8_t *buffer, uint8_t size)
+  static bool readResponse( dy_player_t *player, uint8_t command_from, uint8_t *buffer, uint8_t size)
   {
-    
-    if (player == NULL || player->uart_read == NULL) return false;
+      if (player == NULL ||
+          player->uart_read == NULL ||
+          command_from == 0 ||
+          buffer == NULL ||
+          size == 0) {
+          return false;
+      }
+      do {
+        // On cherche le début de la trame (0xAA)
+        do {
+            if (!player->uart_read(&buffer[0], DY_UART_BYTE_TIMEOUT_MS)) {
+                return false;
+            }
+        } while (buffer[0] != 0xAA);
+        // On contrôle si la reponse reçue correspond à la commande appelante
+        if (!player->uart_read(&buffer[1], DY_UART_BYTE_TIMEOUT_MS)) {
+            return false;
+        }       
+      } while (buffer[1] != command_from);
 
-    if (player->uart_read(buffer, size,DY_UART_BYTE_TIMEOUT_MS )){
-      if (validateCrc(buffer, size)) return true;
-    }
-    return false;
+
+      for (uint8_t i = 2; i < size; i++) {
+          if (!player->uart_read(&buffer[i], DY_UART_BYTE_TIMEOUT_MS)) {
+              return false;
+          }
+      }
+
+      return validateCrc(buffer, size);
   }
 
 /** Public API */
 
 
-bool DYPlayer_init(dy_player_t *player, dy_uart_write_fn_t uart_write_fn, dy_uart_read_fn_t uart_read_fn, uint8_t options)
+bool DYPlayer_init(dy_player_t *player, dy_uart_write_byte_fn_t uart_write_byte_fn, dy_uart_read_byte_fn_t uart_read_byte_fn, uint8_t options)
 {
-    if (player == NULL || uart_write_fn == NULL ) return false; //|| uart_read_fn == NULL
+    if (player == NULL || uart_write_byte_fn == NULL ) return false; //|| uart_read_byte_fn == NULL
 
-    player->uart_write = uart_write_fn;
-    player->uart_read = uart_read_fn;
+    player->uart_write = uart_write_byte_fn;
+    player->uart_read = uart_read_byte_fn;
     player->options = options;
     return true;
 }
@@ -187,7 +246,7 @@ bool DYPlayer_init(dy_player_t *player, dy_uart_write_fn_t uart_write_fn, dy_uar
 
     sendCommand(player, 0x01, NULL, 0);
     uint8_t buffer[5];
-    if (getResponse(player, buffer, 5))
+    if (readResponse(player, 0x01, buffer, 5))
     {
       return (play_state_t)buffer[3];
     }
@@ -243,7 +302,7 @@ bool DYPlayer_init(dy_player_t *player, dy_uart_write_fn_t uart_write_fn, dy_uar
         return DEVICE_FAIL;
 
     uint8_t buffer[5];
-    if (getResponse(player,buffer, 5))
+    if (readResponse(player, 0x0a, buffer, 5))
     {
       return (device_t)buffer[3];
     }
@@ -264,7 +323,7 @@ bool DYPlayer_init(dy_player_t *player, dy_uart_write_fn_t uart_write_fn, dy_uar
         return 0;
     
     uint8_t buffer[6];
-    if (getResponse(player, buffer, 6))
+    if (readResponse(player, 0x0c, buffer, 6))
     {
       return (uint16_t)(((uint16_t)buffer[3] << 8) | (uint16_t)buffer[4]);
     }
@@ -277,7 +336,7 @@ bool DYPlayer_init(dy_player_t *player, dy_uart_write_fn_t uart_write_fn, dy_uar
         return 0;
 
     uint8_t buffer[6];
-    if (getResponse(player, buffer, 6))
+    if (readResponse(player, 0x0d, buffer, 6))
     {
       return (uint16_t)(((uint16_t)buffer[3] << 8) | (uint16_t)buffer[4]);
     }
@@ -302,7 +361,7 @@ bool DYPlayer_init(dy_player_t *player, dy_uart_write_fn_t uart_write_fn, dy_uar
         return 0;
       
     uint8_t buffer[6];
-    if (getResponse(player, buffer, 6))
+    if (readResponse(player, 0x11, buffer, 6))
     {
       return (uint16_t)(((uint16_t)buffer[3] << 8) | (uint16_t)buffer[4]);
     }
@@ -315,7 +374,7 @@ bool DYPlayer_init(dy_player_t *player, dy_uart_write_fn_t uart_write_fn, dy_uar
         return 0;
 
     uint8_t buffer[6];
-    if (getResponse(player, buffer, 6))
+    if (readResponse(player, 0x12, buffer, 6))
     {
       return (uint16_t)(((uint16_t)buffer[3] << 8) | (uint16_t)buffer[4]);
     }
@@ -402,7 +461,7 @@ bool DYPlayer_init(dy_player_t *player, dy_uart_write_fn_t uart_write_fn, dy_uar
     // Depends on the length, checksum is a sum so we can add the other values
     // later.
     uint8_t crc = checksum(header, 3);
-    player->uart_write(header , 3);
+    uart_write_buffer(player, header, 3);
 
     // Send each pair of chars containing the file name and add the values of
     // each char to the crc.
@@ -410,10 +469,10 @@ bool DYPlayer_init(dy_player_t *player, dy_uart_write_fn_t uart_write_fn, dy_uar
     {
       const uint8_t *sound = (const uint8_t *)sounds[i];
       crc += checksum(sound, 2);
-      player->uart_write(sound, 2);
+      uart_write_buffer(player, sound, 2);
     }
     // Lastly, write the crc value.
-    player->uart_write(&crc, 1);
+    player->uart_write(crc);
   }
 
   void DYPlayer_endCombinationPlay(dy_player_t *player)

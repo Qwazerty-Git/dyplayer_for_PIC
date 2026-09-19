@@ -115,33 +115,31 @@ enum
   * go to the previous directory.
   */
   
-  typedef uint8_t playDirSound_t;
-  enum
-  {
-      PREVIOUS_DIR_FIRST_SOUND = 0,
-      PREVIOUS_DIR_LAST_SOUND
-  };  
+typedef uint8_t playDirSound_t;
+enum
+{
+    PREVIOUS_DIR_FIRST_SOUND = 0,
+    PREVIOUS_DIR_LAST_SOUND
+};  
 
 /**
   * Function pointer type for UART write.
-  * @param buffer Pointer to the data buffer to be written.
-  * @param size Number of bytes to write from the buffer.
+  * @param value Pointer to the byte to be written.
 */
-  typedef void (*dy_uart_write_fn_t)(const uint8_t *buffer, uint8_t size);
+typedef void (*dy_uart_write_byte_fn_t)(const uint8_t value);
 
 /**
   * Function pointer type for UART read.
-  * @param buffer Pointer to the data buffer to store the read data.
-  * @param size Number of bytes to read into the buffer.
+  * @param value Pointer to the variable to store the read byte.
   * @param timeout_ms Timeout in milliseconds for the read operation.
   * @return Boolean indicating if the read was successful (true) or not (false).
   */
-typedef bool (*dy_uart_read_fn_t)(uint8_t *buffer, uint8_t size, uint16_t timeout_ms);
+typedef bool (*dy_uart_read_byte_fn_t)(uint8_t *value, uint16_t timeout_ms);
 
 typedef struct
 {
-  dy_uart_read_fn_t uart_read;
-  dy_uart_write_fn_t uart_write;
+  dy_uart_read_byte_fn_t uart_read;
+  dy_uart_write_byte_fn_t uart_write;
   uint8_t options;
 } dy_player_t;
 
@@ -153,7 +151,7 @@ typedef struct
   * @param options Options for the DYPlayer initialization.
   * @return boolean indicating if the initialization was successful (true) or not (false).
   */
-bool DYPlayer_init(dy_player_t *player, dy_uart_write_fn_t uart_write_fn, dy_uart_read_fn_t uart_read_fn, uint8_t options);
+bool DYPlayer_init(dy_player_t *player, dy_uart_write_byte_fn_t uart_write_fn, dy_uart_read_byte_fn_t uart_read_fn, uint8_t options);
 
 /**
   * Check the current play state can, be called at any time.
