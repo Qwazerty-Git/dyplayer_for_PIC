@@ -101,14 +101,14 @@ namespace DY
     buffer[2] = size;
     uart_write_buffer(player, buffer, sizeof(buffer));
 
-    uint8_t crc[1] = {0};
-    crc[0] = checksum(buffer, sizeof(buffer));
+    uint8_t crc = 0;
+    crc = checksum(buffer, sizeof(buffer));
     if (data != NULL && size > 0) {
       uart_write_buffer(player,data, size);
-      crc[0] += checksum(data, size);
+      crc += checksum(data, size);
     }
 
-    uart_write_buffer(player, &crc[0], 1);
+    player->uart_write(crc);
 
     return true;
   }
@@ -171,7 +171,7 @@ namespace DY
       if (c == '.') {
         uint8_t byte = '*';
         crc += byte;
-        uart_write_buffer(player, &byte, 1);
+        player->uart_write(byte);
       } else if (c == '/') {
         uint8_t bytes[2] = { '*', '/' };
         crc += bytes[0] + bytes[1];
@@ -179,11 +179,11 @@ namespace DY
       } else {
         uint8_t byte = (uint8_t)toupper((unsigned char)c);
         crc += byte;
-        uart_write_buffer(player, &byte, 1);
+        player->uart_write( byte);
       }
     }
 
-    uart_write_buffer(player, &crc, 1);
+    player->uart_write(crc);
     return true;
   }
 /**
